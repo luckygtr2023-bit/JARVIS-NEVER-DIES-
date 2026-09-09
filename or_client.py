@@ -85,8 +85,8 @@ class OpenRouterClient:
         self._headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type":  "application/json",
-            "HTTP-Referer":  "https://github.com/mark-xxv",
-            "X-Title":       "Brahma Echo",
+            "HTTP-Referer":  "https://github.com/luckygtr2023-bit/JARVIS-NEVER-DIES-",
+            "X-Title":       "J.A.R.V.I.S.",
         }
 
     def _is_rate_limited(self, model: str) -> bool:
@@ -218,7 +218,7 @@ class OpenRouterClient:
         self,
         prompt: str,
         system: str = (
-            "You are a component of Brahma Echo, an open-source personal assistant. "
+            "You are a component of J.A.R.V.I.S. (Just A Rather Very Intelligent System), a private personal AI assistant. "
             "Be concise, helpful, and precise."
         ),
         history: Optional[list[dict]] = None,
@@ -349,7 +349,7 @@ client = OpenRouterClient()
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  Brahma Echo — OpenRouter Client Self-Test")
+    print("  J.A.R.V.I.S. — OpenRouter Client Self-Test")
     print("=" * 55)
 
     print("\n[TEST 1] Basic chat...")

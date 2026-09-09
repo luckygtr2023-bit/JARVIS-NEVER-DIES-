@@ -2534,11 +2534,13 @@ class BrahmaLive:
             reply = ""
             gemini_first = not self._use_openrouter_first
             request_text = f"{memory_ctx}\n\nCurrent User Request:\n{text}" if memory_ctx else text
+            ai_errors: list[str] = []
 
             if gemini_first:
                 try:
                     reply = _gemini_text_reply(request_text)
                 except Exception as e:
+                    ai_errors.append(f"Gemini: {e}")
                     print(f"[J.A.R.V.I.S.] ⚠️ Gemini fallback failed: {e}")
                     if _is_gemini_limit_error(e):
                         self._use_openrouter_first = True
@@ -2553,17 +2555,27 @@ class BrahmaLive:
                         ),
                     )
                 except Exception as e:
-                    print(f"[J.A.R.V.I.S.] ⚠️ OpenRouter fallback failed: {e}")
+                    ai_errors.append(f"{getattr(openrouter_client, '_provider', 'OpenRouter')}: {e}")
+                    print(f"[J.A.R.V.I.S.] ⚠️ AI provider fallback failed: {e}")
                     if gemini_first and not self._use_openrouter_first and _is_gemini_limit_error(e):
                         self._use_openrouter_first = True
             reply = (reply or "").strip()
-            if not reply:
-                reply = "I’m ready, sir."
-            self.ui.write_log(f"JARVIS: {reply}")
-            try:
-                self.ui.finish_task_workspace(reply, "Reply delivered.", 100)
-            except Exception:
-                pass
+            if reply:
+                self.ui.write_log(f"JARVIS: {reply}")
+                try:
+                    self.ui.finish_task_workspace(reply, "Reply delivered.", 100)
+                except Exception:
+                    pass
+            else:
+                # Never fake a success when every AI provider failed — surface a real error.
+                detail = "; ".join(ai_errors) if ai_errors else "No AI provider responded."
+                msg = f"AI PROVIDERS UNAVAILABLE — {detail} Check config/api_keys.json and that Ollama is running."
+                print(f"[J.A.R.V.I.S.] ⚠️ {msg}")
+                self.ui.write_log(f"ERR: {msg}")
+                try:
+                    self.ui.finish_task_workspace(msg, "Reply failed.", 100)
+                except Exception:
+                    pass
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
         except Exception as e:
@@ -2576,6 +2588,7 @@ class BrahmaLive:
                 pass
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
+
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
