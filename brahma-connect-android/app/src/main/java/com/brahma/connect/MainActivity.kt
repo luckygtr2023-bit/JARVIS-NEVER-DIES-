@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
             }
         } else {
             pendingServiceStart = false
-            AgentStateStore.setError("Notification permission is required for Brahma Connect.")
+            AgentStateStore.setError("Notification permission is required for the J.A.R.V.I.S. companion.")
             AgentStateStore.setStatus("Notification permission denied")
         }
     }

@@ -34,15 +34,28 @@ class PairingStorage(context: Context) {
         val raw = prefs.getString("device_credential", null) ?: return null
         return try {
             val json = JSONObject(raw)
+            val deviceId = json.optString("device_id")
+            val deviceSecret = json.optString("device_secret")
+            val gatewayHost = json.optString("gateway_host")
+            val gatewayPort = json.optInt("gateway_port", 0)
+            // Fail closed: a corrupt, partial or loopback trust record is
+            // treated as absent and cleared rather than silently used.
+            if (deviceId.isBlank() || deviceSecret.isBlank() || gatewayHost.isBlank() ||
+                gatewayPort <= 0 || gatewayPort > 65535
+            ) {
+                clearCredential()
+                return null
+            }
             DeviceCredential(
-                deviceId = json.optString("device_id"),
-                deviceSecret = json.optString("device_secret"),
+                deviceId = deviceId,
+                deviceSecret = deviceSecret,
                 deviceName = json.optString("device_name", Build.MODEL),
-                gatewayHost = json.optString("gateway_host"),
-                gatewayPort = json.optInt("gateway_port", 8765),
+                gatewayHost = gatewayHost,
+                gatewayPort = gatewayPort,
                 pairedAt = json.optString("paired_at"),
             )
         } catch (_: Exception) {
+            clearCredential()
             null
         }
     }
@@ -60,8 +73,17 @@ class PairingStorage(context: Context) {
     fun loadGatewayHint(): PairingOffer? {
         val raw = prefs.getString("last_pairing_offer", null) ?: return null
         return try {
-            PairingOffer.fromJson(JSONObject(raw))
+            val offer = PairingOffer.fromJson(JSONObject(raw))
+            if (offer.host.isBlank() || offer.host.equals("localhost", true) ||
+                offer.host == "127.0.0.1" || offer.port <= 0 || offer.port > 65535
+            ) {
+                prefs.edit().remove("last_pairing_offer").apply()
+                null
+            } else {
+                offer
+            }
         } catch (_: Exception) {
+            prefs.edit().remove("last_pairing_offer").apply()
             null
         }
     }

@@ -37,6 +37,8 @@ fun ChatScreen(
     onSendMessage: (String) -> Unit
 ) {
     val chatHistory by AgentStateStore.chatHistory.collectAsState()
+    val connectionState by AgentStateStore.connectionState.collectAsState()
+    val lastError by AgentStateStore.lastError.collectAsState()
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var inputText by remember { mutableStateOf("") }
@@ -48,12 +50,10 @@ fun ChatScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        HolographicBackground()
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.7f))
+                .background(Color(0xFF020305))
         ) {
             // Top Bar
             CenterAlignedTopAppBar(
@@ -76,6 +76,52 @@ fun ChatScreen(
                 )
             )
 
+            // Connection / error banner (reactor state mirrors the HUD).
+            // A healthy connection wins over any stale error text.
+            val err = lastError
+            val connected = connectionState == com.brahma.connect.core.ConnectionState.CONNECTED
+            val bannerColor = when {
+                connected -> Color(0xFF37FF5F)
+                err != null -> Color(0xFFFF4040)
+                else -> Color(0xFFFFB300)
+            }
+            val bannerText = when {
+                connected -> "J.A.R.V.I.S. connected"
+                err != null -> err
+                else -> reactorStateLabel(connectionState, false)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(bannerColor),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = bannerText,
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "\u00b7",
+                    color = Color.Gray,
+                    fontSize = 12.sp,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Ollama \u2192 OmniRoute \u2192 cloud on your PC",
+                    color = Color.Gray,
+                    fontSize = 11.sp,
+                )
+            }
+
             // Chat Messages
             LazyColumn(
                 modifier = Modifier
@@ -86,6 +132,30 @@ fun ChatScreen(
                 contentPadding = PaddingValues(vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (chatHistory.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(top = 80.dp, bottom = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                "Say hello to J.A.R.V.I.S.",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Messages are routed through your trusted J.A.R.V.I.S. PC gateway "
+                                    + "(memory and AI providers stay on the desktop).",
+                                color = Color.Gray,
+                                fontSize = 13.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 24.dp),
+                            )
+                        }
+                    }
+                }
                 items(chatHistory, key = { it.id }) { message ->
                     ChatMessageBubble(message = message)
                 }
@@ -172,7 +242,7 @@ fun ChatMessageBubble(message: ChatMessage) {
                     .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text("B", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("J", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
             Spacer(modifier = Modifier.width(8.dp))
         }

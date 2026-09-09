@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -50,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.brahma.connect.BrahmaConnectForegroundService
@@ -68,8 +70,6 @@ import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -82,24 +82,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Send
 
 
-
-@Composable
-fun HolographicBackground() {
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                settings.javaScriptEnabled = true
-                settings.allowFileAccess = true
-                settings.allowContentAccess = true
-                settings.domStorageEnabled = true
-                webViewClient = WebViewClient()
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                loadUrl("file:///android_asset/web_background/index.html")
-            }
-        },
-        modifier = Modifier.fillMaxSize()
-    )
-}
 
 @Composable
 fun BrahmaConnectApp(
@@ -153,10 +135,10 @@ fun BrahmaConnectApp(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Render 3D Background
-        HolographicBackground()
-
+    Box(
+        modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF020305)),
+    ) {
+        // Minimal dark background: the live reactor + status cards are the focus.
         // UI Overlay
         NavHost(
             navController = navController, 
@@ -269,6 +251,7 @@ fun BrahmaConnectApp(
                         state = connectionState,
                         logs = logs,
                         status = status,
+                        error = lastError,
                         onDisconnect = {
                             context.startService(Intent(context, BrahmaConnectForegroundService::class.java).apply {
                                 action = BrahmaConnectForegroundService.ACTION_STOP
@@ -323,11 +306,13 @@ fun GlassCard(content: @Composable () -> Unit) {
 @Composable
 fun WelcomeScreen(onNext: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("BRAHMA", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-        Text("CONNECT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Light, color = androidx.compose.ui.graphics.Color.White)
-        Spacer(modifier = Modifier.height(60.dp))
+        Text("J.A.R.V.I.S.", style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+        Text("MOBILE COMPANION", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Light, color = androidx.compose.ui.graphics.Color.White)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text("Just A Rather Very Intelligent System", style = MaterialTheme.typography.bodySmall, color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.6f))
+        Spacer(modifier = Modifier.height(52.dp))
         GlassCard {
-            Text("Welcome to the neural bridge.", style = MaterialTheme.typography.bodyLarge, color = androidx.compose.ui.graphics.Color.White)
+            Text("Your private gateway to the J.A.R.V.I.S. system on your PC.", style = MaterialTheme.typography.bodyLarge, color = androidx.compose.ui.graphics.Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             Spacer(modifier = Modifier.height(24.dp))
             Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
                 Text("Get Started")
@@ -340,12 +325,18 @@ fun WelcomeScreen(onNext: () -> Unit) {
 fun AboutScreen(onNext: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         GlassCard {
-            Text("Hardware Bridge", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("This agent acts as a secure physical bridge between your Android device and your PC's J.A.R.V.I.S.", color = androidx.compose.ui.graphics.Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text("J.A.R.V.I.S.", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text("Just A Rather Very Intelligent System", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(modifier = Modifier.height(14.dp))
+            Text("The secure mobile bridge between your Android device and the J.A.R.V.I.S. desktop system. Connection and AI routing (Ollama · OmniRoute · OpenRouter/Gemini) always stay on your PC gateway.", color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.82f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(modifier = Modifier.height(14.dp))
+            Text("Owner: Lucky", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Made by Lucky", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Spacer(modifier = Modifier.height(24.dp))
             Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
-                Text("Next")
+                Text("Continue")
             }
         }
     }
@@ -372,12 +363,20 @@ fun ConnectedAnimatedScreen(onFinished: () -> Unit) {
         delay(2000)
         onFinished()
     }
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        GlassCard {
-            Text("Connection Established", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(16.dp))
-            androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-        }
+    Column(
+        modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF020305)),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        JarvisReactor(state = "INITIALISING", modifier = Modifier.fillMaxWidth().height(240.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "Establishing secure link with your J.A.R.V.I.S. gateway...",
+            style = MaterialTheme.typography.bodyMedium,
+            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.8f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
     }
 }
 
@@ -397,7 +396,7 @@ private fun StartupPermissionsScreen(
     ) {
         Text("SETUP REQUIRED", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(8.dp))
-        Text("Enable the permissions Brahma Connect needs to control your phone reliably.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Enable the permissions the J.A.R.V.I.S. companion needs to control your phone reliably.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(20.dp))
         Card(colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f), contentColor = androidx.compose.ui.graphics.Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))) {
             Column(Modifier.padding(18.dp)) {
@@ -440,7 +439,7 @@ private fun DiscoveryScreen(
     status: String,
     error: String?,
     onConnect: (() -> Unit)?,
-    onFindBrahma: () -> Unit,
+    onFindGateway: () -> Unit,
     onScanQr: () -> Unit,
     onEnterIp: () -> Unit,
 ) {
@@ -448,7 +447,7 @@ private fun DiscoveryScreen(
         modifier = Modifier.fillMaxSize().padding(24.dp).background(androidx.compose.ui.graphics.Color.Transparent).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("BRAHMA CONNECT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = androidx.compose.ui.graphics.Color.White)
+        Text("J.A.R.V.I.S. CONNECT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = androidx.compose.ui.graphics.Color.White)
         Spacer(Modifier.height(8.dp))
         Text("Connect this device to J.A.R.V.I.S.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
@@ -470,7 +469,7 @@ private fun DiscoveryScreen(
             Button(onClick = onConnect, modifier = Modifier.fillMaxWidth()) { Text("Connect") }
             Spacer(Modifier.height(12.dp))
         }
-        Button(onClick = onFindBrahma, modifier = Modifier.fillMaxWidth()) { Text("Find J.A.R.V.I.S.") }
+        Button(onClick = onFindGateway, modifier = Modifier.fillMaxWidth()) { Text("Find J.A.R.V.I.S.") }
         Spacer(Modifier.height(12.dp))
         FilledTonalButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) { Text("Scan QR") }
         Spacer(Modifier.height(12.dp))
@@ -489,7 +488,7 @@ private fun PairingPendingScreen(
     onCancel: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Text("CONNECT TO BRAHMA?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+        Text("CONNECT TO J.A.R.V.I.S.?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(8.dp))
         Text("${gateway?.name ?: "JARVIS PC"}\n${gateway?.host ?: offer.host}:${offer.port}", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(20.dp))
@@ -516,42 +515,93 @@ private fun ConnectedScreen(
     state: ConnectionState,
     logs: List<String>,
     status: String,
+    error: String?,
     onDisconnect: () -> Unit,
     onOpenPermissions: () -> Unit,
     onOpenChat: () -> Unit,
 ) {
+    var showAbout by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    val healthy = state == ConnectionState.CONNECTED
+    val reactorState = if (healthy) "READY" else reactorStateLabel(state, error != null)
+    val white = androidx.compose.ui.graphics.Color.White
+    val online = state == ConnectionState.CONNECTED
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp).background(androidx.compose.ui.graphics.Color.Transparent).verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)
+            .background(androidx.compose.ui.graphics.Color.Transparent)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("BRAHMA CONNECT", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = androidx.compose.ui.graphics.Color.White)
-        Spacer(Modifier.height(8.dp))
-        Text("● Connected", color = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(20.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f), contentColor = androidx.compose.ui.graphics.Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text("J.A.R.V.I.S.", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = white)
+                Text("Just A Rather Very Intelligent System", style = MaterialTheme.typography.labelSmall, color = white.copy(alpha = 0.55f))
+            }
+            Text(
+                if (online) "\u25CF ONLINE" else "\u25CF $reactorState",
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = if (online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        // Live animated reactor (never a static image)
+        JarvisReactor(state = reactorState, modifier = Modifier.fillMaxWidth().height(232.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (online) "Connected to ${gateway?.name ?: "JARVIS PC"}" else status.ifBlank { reactorState },
+            style = MaterialTheme.typography.labelMedium,
+            color = white.copy(alpha = 0.7f),
+        )
+        Spacer(Modifier.height(12.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
+                contentColor = white,
+            ),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(Modifier.padding(16.dp)) {
-                Text(gateway?.name ?: "JARVIS PC", fontWeight = FontWeight.Bold)
-                Text(credential.deviceName)
-                Text("Battery status is reported by the agent.")
-                Text("Network: Wi-Fi")
-                Text("State: $state")
-                Text(status)
+                Text("SYSTEM STATUS", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+                StatusRow("Device", credential.deviceName)
+                StatusRow("Gateway", gateway?.let { "${it.name} \u00b7 ${it.host}:${it.port}" } ?: "Not selected")
+                StatusRow("Connection", state.toString())
+                StatusRow("Trust", "Paired (encrypted credential)")
+                StatusRow("Detail", status)
+                if (error != null && !healthy) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "AI routing stays on your PC gateway: Ollama \u2192 OmniRoute \u2192 OpenRouter/Gemini. "
+                        + "The companion never receives provider API keys.",
+                    fontSize = 11.sp,
+                    color = white.copy(alpha = 0.6f),
+                )
             }
         }
-        Spacer(Modifier.height(16.dp))
-        
+        Spacer(Modifier.height(12.dp))
+
         Card(
             onClick = onOpenChat,
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                contentColor = MaterialTheme.colorScheme.primary
+                contentColor = MaterialTheme.colorScheme.primary,
             ),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
         ) {
             Row(
                 modifier = Modifier.padding(16.dp).fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column {
                     Text("J.A.R.V.I.S. Chat", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
@@ -561,30 +611,104 @@ private fun ConnectedScreen(
                 Icon(
                     imageVector = androidx.compose.material.icons.Icons.Default.Send,
                     contentDescription = "Open Chat",
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
         }
-        Spacer(Modifier.height(16.dp))
-        
-        Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
         Spacer(Modifier.height(12.dp))
+
+        Row(Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { showAbout = true }, modifier = Modifier.weight(1f)) { Text("About") }
+            Spacer(Modifier.width(10.dp))
+            OutlinedButton(onClick = { showSettings = true }, modifier = Modifier.weight(1f)) { Text("Settings") }
+        }
+        Spacer(Modifier.height(10.dp))
+        Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
+        Spacer(Modifier.height(10.dp))
         OutlinedButton(
-            onClick = onOpenPermissions, 
+            onClick = onOpenPermissions,
             modifier = Modifier.fillMaxWidth(),
             colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
                 containerColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
-                contentColor = androidx.compose.ui.graphics.Color.White
-            )
+                contentColor = white,
+            ),
         ) {
-            Text("Permissions", color = androidx.compose.ui.graphics.Color.White)
+            Text("Permissions", color = white)
         }
-        Spacer(Modifier.height(20.dp))
-        Text("Recent Logs", fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        logs.takeLast(8).forEach { line ->
-            Text(line, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        Spacer(Modifier.height(18.dp))
+        Text("Recent Logs", fontWeight = FontWeight.Bold, color = white, style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.height(6.dp))
+        logs.takeLast(6).forEach { line ->
+            Text(line, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
         }
+        Spacer(Modifier.height(14.dp))
+        Text("Made by Lucky", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.height(6.dp))
+    }
+
+    if (showAbout) {
+        AlertDialog(
+            onDismissRequest = { showAbout = false },
+            title = { Text("J.A.R.V.I.S.") },
+            text = {
+                Column {
+                    Text("Just A Rather Very Intelligent System", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Private mobile companion for the J.A.R.V.I.S. desktop system.")
+                    Spacer(Modifier.height(10.dp))
+                    Text("Owner: Lucky")
+                    Spacer(Modifier.height(4.dp))
+                    Text("Made by Lucky", color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Private, personal use companion. The upstream LICENSE and "
+                            + "TRADEMARK notices ship with this project.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAbout = false }) { Text("Done") } },
+        )
+    }
+
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("Settings & Status") },
+            text = {
+                Column {
+                    StatusRow("Connection", state.toString())
+                    StatusRow("Gateway", gateway?.let { "${it.name} \u00b7 ${it.host}:${it.port}" } ?: "Not selected")
+                    StatusRow("Device", credential.deviceName)
+                    StatusRow("Notifications", "Foreground service")
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "OmniRoute / Ollama / cloud providers are configured on the J.A.R.V.I.S. PC gateway. "
+                            + "This app connects over the trusted device link only.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Done") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    showSettings = false
+                    onOpenPermissions()
+                }) { Text("Permissions") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun StatusRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Spacer(Modifier.width(8.dp))
+        Text(value, color = androidx.compose.ui.graphics.Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
