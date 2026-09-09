@@ -316,6 +316,43 @@ def forget(key: str, category: str = "notes") -> str:
 forget_memory = forget
 
 
+def _entry_value(entry) -> str:
+    if isinstance(entry, dict):
+        val = entry.get("value")
+        return str(val) if val is not None else ""
+    return str(entry or "")
+
+
+def list_remembered_memory(limit: int = 40) -> str:
+    """Human-readable list of everything J.A.R.V.I.S. currently remembers."""
+    memory = load_memory()
+    order = ["identity", "preferences", "projects", "relationships", "wishes", "notes"]
+    lines: list[str] = []
+    count = 0
+    for cat in order:
+        items = memory.get(cat) or {}
+        if not isinstance(items, dict):
+            continue
+        for key, entry in items.items():
+            value = _entry_value(entry)
+            if not value:
+                continue
+            lines.append(f"• {cat} › {key}: {value}")
+            count += 1
+            if count >= limit:
+                lines.append("…")
+                return "\n".join(lines)
+    return "\n".join(lines)
+
+
+def clear_all_memory() -> int:
+    """Wipe the long-term memory store; returns how many entries were removed."""
+    memory = load_memory()
+    count = len(_all_entries(memory))
+    save_memory(_empty_memory())
+    return count
+
+
 CHAT_HISTORY_PATH = BASE_DIR / "memory" / "chat_history.json"
 MAX_HISTORY_LENGTH = 40
 

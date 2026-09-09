@@ -25,7 +25,9 @@ from google.genai import types
 from ui import BrahmaUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
-    should_extract_memory, extract_memory
+    should_extract_memory, extract_memory,
+    remember as memory_remember, forget as memory_forget,
+    list_remembered_memory, clear_all_memory,
 )
 
 from actions.file_processor import file_processor
@@ -1654,6 +1656,10 @@ class BrahmaLive:
                     pass
             return
 
+        # Deterministic offline memory commands (remember / forget / recall / clear).
+        if self._handle_memory_command(text):
+            return
+
         try:
             from smart_home.smart_device_manager import SmartDeviceManager
             sd_mgr = SmartDeviceManager()
@@ -1769,6 +1775,105 @@ class BrahmaLive:
             self._loop
         )
 
+
+    # ── Deterministic memory commands (offline, no LLM required) ────────────
+    _MEM_REMEMBER_RE = re.compile(r"^(?:please\s+)?remember\s+(?:that\s+)?", re.IGNORECASE)
+    _MEM_FORGET_RE   = re.compile(r"^(?:please\s+)?forget\s+", re.IGNORECASE)
+    _MEM_CLEAR_CMDS  = ("clear memory", "erase your memory", "erase memory", "forget everything")
+
+    @staticmethod
+    def _memory_category_guess(content: str) -> str:
+        c = content.lower()
+        if any(w in c for w in ("my name", "birthday", "born on", "born in", "live in", "i am from", "i'm from", "my age", "my city")):
+            return "identity"
+        if any(w in c for w in ("project", "deadline", "assignment", "due", "homework", "work on")):
+            return "projects"
+        if any(w in c for w in ("like", "love", "prefer", "favorite", "favourite", "hate", "dislike", "don't like")):
+            return "preferences"
+        if any(w in c for w in ("friend", "family", "wife", "husband", "girlfriend", "boyfriend", "brother", "sister", "mom", "dad", "mother", "father", "partner")):
+            return "relationships"
+        if any(w in c for w in ("wish", "want to", "dream of")):
+            return "wishes"
+        return "notes"
+
+    def _handle_memory_command(self, text: str) -> bool:
+        t = (text or "").strip()
+        if not t:
+            return False
+        low = t.lower()
+
+        if re.match(r"^(?:so\s+)?what do you (?:remember|know)\??$", low):
+            summary = list_remembered_memory()
+            reply = (
+                f"Here is what I remember:\n{summary}"
+                if summary
+                else "I have no stored memories yet. Say something like 'remember that my favorite color is orange'."
+            )
+            self.ui.write_log(f"JARVIS: {reply}")
+            self.speak("Here is what I remember." if summary else "I do not remember anything yet.")
+            return True
+
+        if low.startswith(self._MEM_CLEAR_CMDS):
+            removed = clear_all_memory()
+            noun = "entry" if removed == 1 else "entries"
+            self.ui.write_log(f"JARVIS: Memory cleared — removed {removed} stored {noun}.")
+            self.speak("Memory cleared.")
+            return True
+
+        rem = self._MEM_REMEMBER_RE.match(t)
+        if rem:
+            content = t[rem.end():].strip().rstrip(".")
+            if not content:
+                self.ui.write_log("JARVIS: What would you like me to remember?")
+                self.speak("What would you like me to remember?")
+                return True
+            cat = self._memory_category_guess(content)
+            key = ""
+            value = content
+            m = re.search(r"\bmy name is\s+(.+)$", content, re.IGNORECASE)
+            if m:
+                key, cat, value = "name", "identity", m.group(1).strip()
+            m = re.search(r"\bmy birthday is\s+(.+)$", content, re.IGNORECASE)
+            if m and not key:
+                key, cat, value = "birthday", "identity", m.group(1).strip()
+            m = re.search(r"\b(?:i live in|i am from|i'm from)\s+(.+)$", content, re.IGNORECASE)
+            if m and not key:
+                key, cat, value = "city", "identity", m.group(1).strip()
+            m = re.search(r"\bmy\s+(?:favourite|favorite)\s+([a-z]+)\s+(?:is|are)\s+(.+)$", content, re.IGNORECASE)
+            if m and not key:
+                key, value = f"favorite_{m.group(1).strip().lower()}", m.group(2).strip()
+            if not key:
+                words = re.findall(r"[A-Za-z0-9]+", content)[:4]
+                key = "_".join(words).lower() or "note"
+                if len(key) > 60:
+                    key = key[:60]
+            result = memory_remember(key, value, cat)
+            self.ui.write_log(f"JARVIS: Got it — {result}.")
+            self.speak(f"Got it, I'll remember that.")
+            return True
+
+        fg = self._MEM_FORGET_RE.match(t)
+        if fg:
+            target = fg.group(0) and t[fg.end():].strip().strip(".").lower()
+            for prefix in ("my ", "the ", "that ", "about "):
+                if target.startswith(prefix):
+                    target = target[len(prefix):]
+                    break
+            found = False
+            for cat in ("identity", "preferences", "projects", "relationships", "wishes", "notes"):
+                res = memory_forget(target, cat)
+                if res.startswith("Forgotten"):
+                    found = True
+                    break
+            if found:
+                self.ui.write_log(f"JARVIS: {res}.")
+                self.speak("Done, I've forgotten that.")
+            else:
+                self.ui.write_log(f"JARVIS: I couldn't find '{target}' in memory. Say 'what do you remember' to see what I have stored.")
+                self.speak("I could not find that in my memory.")
+            return True
+
+        return False
 
     def _handle_smart_home_command(self, text: str, source: str = "local") -> bool:
         normalized = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s%]", " ", text.lower())).strip()

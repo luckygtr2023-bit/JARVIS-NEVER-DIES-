@@ -70,3 +70,4 @@ homescreen background/out/
 # Android / Gradle caches
 .gradle/
 *.apk
+memory/chat_history.json

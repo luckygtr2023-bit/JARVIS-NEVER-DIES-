@@ -20,20 +20,27 @@ class DeviceManager:
         self.load()
 
     def load(self) -> None:
+        # FAIL CLOSED: any corrupt, malformed or unexpected registry content
+        # yields an empty device set (nothing is trusted), never a partial
+        # or crash-y state that could be mistaken for a valid policy.
         with self._lock:
+            self._devices = {}
             if not self.registry_path.exists():
-                self._devices = {}
                 return
             try:
                 raw = json.loads(self.registry_path.read_text(encoding="utf-8"))
+                if not isinstance(raw, dict):
+                    return
+                devices = raw.get("devices", raw)
+                if not isinstance(devices, dict):
+                    return
+                self._devices = {
+                    device_id: DeviceRecord.from_dict(item)
+                    for device_id, item in devices.items()
+                    if isinstance(item, dict)
+                }
             except Exception:
-                raw = {}
-            devices = raw.get("devices", raw) if isinstance(raw, dict) else {}
-            self._devices = {
-                device_id: DeviceRecord.from_dict(item)
-                for device_id, item in (devices or {}).items()
-                if isinstance(item, dict)
-            }
+                self._devices = {}
 
     def save(self) -> None:
         with self._lock:
