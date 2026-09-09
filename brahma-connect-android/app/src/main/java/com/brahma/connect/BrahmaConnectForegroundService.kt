@@ -25,7 +25,6 @@ class BrahmaConnectForegroundService : Service() {
     private val scope = CoroutineScope(Job() + Dispatchers.IO)
     private lateinit var storage: PairingStorage
     private lateinit var client: BrahmaWebSocketClient
-    private var started = false
 
     override fun onCreate() {
         super.onCreate()
@@ -33,7 +32,7 @@ class BrahmaConnectForegroundService : Service() {
         client = BrahmaWebSocketClient(this, storage, DeviceCommandHandler(this))
         createNotificationChannel()
         try {
-            val notification = buildNotification("Brahma Connect", "Starting connection")
+            val notification = buildNotification("J.A.R.V.I.S.", "Starting connection")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else {
@@ -77,11 +76,9 @@ class BrahmaConnectForegroundService : Service() {
         val endpoint = AgentStateStore.gateway.value ?: return
         val credential = storage.loadCredential()
         val offer = AgentStateStore.pairingOffer.value ?: storage.loadGatewayHint()
-        if (!started) {
-            started = true
-        }
+        // The client owns the connection state (CONNECTING/online or a
+        // fail-closed rejection for invalid/loopback/partial endpoints).
         client.connect(endpoint, credential, offer)
-        AgentStateStore.setConnectionState(ConnectionState.CONNECTING)
     }
 
     private fun updateNotification() {
@@ -93,12 +90,12 @@ class BrahmaConnectForegroundService : Service() {
             ConnectionState.DISCONNECTED -> "Disconnected"
         }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification("Brahma Connect", text))
+        manager.notify(NOTIFICATION_ID, buildNotification("J.A.R.V.I.S.", text))
     }
 
     private fun buildNotification(title: String, text: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_brahma_launcher)
+            .setSmallIcon(R.drawable.ic_jarvis_launcher)
             .setContentTitle(title)
             .setContentText(text)
             .setOngoing(true)
@@ -108,7 +105,7 @@ class BrahmaConnectForegroundService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(CHANNEL_ID, "Brahma Connect", NotificationManager.IMPORTANCE_LOW)
+        val channel = NotificationChannel(CHANNEL_ID, "J.A.R.V.I.S.", NotificationManager.IMPORTANCE_LOW)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(channel)
     }

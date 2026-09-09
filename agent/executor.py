@@ -171,6 +171,28 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         print(f"[Executor] ⚠️ Translation failed: {e}")
         return content
 
+def _direct_answer(question: str, reasoning: bool = False) -> str:
+    """Answer a knowledge/reasoning question through the unified AI chain
+    (Local Ollama -> OmniRoute -> OpenRouter/Gemini). Raises on failure so the
+    executor reports the honest error instead of guessing."""
+    from llm_client import client as unified
+    if reasoning:
+        system = (
+            "You are J.A.R.V.I.S. The user asked a reasoning question "
+            "(why/how/compare/trade-offs). Work through the actual reasoning "
+            "step by step and give a clear, structured conclusion."
+        )
+    else:
+        system = (
+            "You are J.A.R.V.I.S. Answer the user's question directly, "
+            "accurately, and concisely. If you are not certain, say so."
+        )
+    answer = unified.chat(question, system=system, temperature=0.6)
+    if not (answer or "").strip():
+        raise RuntimeError("AI provider returned an empty answer.")
+    return answer.strip()
+
+
 def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
 
     if tool == "open_app":
@@ -180,6 +202,11 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
     elif tool == "web_search":
         from actions.web_search import web_search
         return web_search(parameters=parameters, player=None) or "Done."
+    elif tool == "direct_answer":
+        question = (parameters or {}).get("question", "") or ""
+        if not question:
+            question = str(parameters or {})
+        return _direct_answer(question)
     elif tool == "game_updater":
         from actions.game_updater import game_updater
         return game_updater(parameters=parameters, player=None, speak=speak) or "Done."
@@ -294,6 +321,35 @@ class AgentExecutor:
         cancel_flag: threading.Event | None = None,
     ) -> str:
         print(f"\n[Executor] 🎯 Goal: {goal}")
+
+        # Classify first: knowledge/reasoning questions must be answered, not
+        # turned into web_search or shell commands. Web-research and
+        # browser-search requests run the reasoning pipeline (real search ->
+        # evidence-grounded answer). Only action-style goals go to the planner.
+        try:
+            from agent.intent import IntentKind, classify_intent
+            from agent.reasoner import ReasoningPipeline, UnifiedChainAI
+            intent = classify_intent(goal)
+            print(f"[Executor] 🔀 {intent.describe()}")
+            if intent.kind in (IntentKind.ANSWER_KNOWLEDGE, IntentKind.REASONING,
+                               IntentKind.CHITCHAT, IntentKind.WEB_RESEARCH,
+                               IntentKind.BROWSER_SEARCH):
+                if speak:
+                    speak("Let me handle that directly, sir.")
+                try:
+                    pipeline = ReasoningPipeline(ai=UnifiedChainAI())
+                    result = pipeline.handle(goal)
+                    final = (result.answer or "").strip()
+                    if not final:
+                        final = f"Task could not be completed: {result.error or 'unknown reason'}"
+                except Exception as exc:
+                    final = f"Task failed: {exc}"
+                print(f"[Executor] ✅ {final[:160]}")
+                if speak:
+                    speak(final)
+                return final
+        except Exception as exc:
+            print(f"[Executor] ⚠️ Direct handling unavailable ({exc}) - using planner")
 
         replan_attempts = 0
         completed_steps = []

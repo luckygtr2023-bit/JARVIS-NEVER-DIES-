@@ -41,6 +41,23 @@ class BrahmaWebSocketClient(
     private var lastConnectUptime = 0L
 
     fun connect(endpoint: GatewayEndpoint, credential: DeviceCredential? = storage.loadCredential(), offer: PairingOffer? = null) {
+        val hostTrimmed = endpoint.host.trim().lowercase()
+        if (hostTrimmed.isBlank() || hostTrimmed == "localhost" || hostTrimmed == "127.0.0.1" || hostTrimmed == "::1") {
+            // 'localhost' inside the Android app is the phone itself, never the
+            // Windows J.A.R.V.I.S. gateway. Refuse to invent an unreachable link.
+            AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+            AgentStateStore.setError(
+                "Enter your Windows PC's LAN address (e.g. 192.168.1.20) - 'localhost' on this phone is not the PC.",
+            )
+            AgentStateStore.setStatus("Invalid gateway address")
+            return
+        }
+        if (endpoint.port <= 0 || endpoint.port > 65535) {
+            AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+            AgentStateStore.setError("Invalid gateway port.")
+            AgentStateStore.setStatus("Invalid gateway port")
+            return
+        }
         if (socket != null && currentEndpoint == endpoint) {
             currentCredential = credential ?: currentCredential
             currentOffer = offer ?: currentOffer
@@ -146,7 +163,9 @@ class BrahmaWebSocketClient(
 
     private fun sendAuthenticate() {
         val credential = currentCredential ?: storage.loadCredential()
-        if (credential == null) {
+        if (credential == null || credential.deviceId.isBlank() || credential.deviceSecret.isBlank()) {
+            AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+            AgentStateStore.setStatus("No valid device credential")
             sendHello()
             return
         }
@@ -180,12 +199,22 @@ class BrahmaWebSocketClient(
         val secret = payload.optString("device_secret")
         val deviceId = device.optString("device_id")
         val deviceName = device.optString("name", android.os.Build.MODEL ?: "Android")
+        val endpoint = currentEndpoint
+        // Fail closed: only persist a fully-formed credential. A revoked,
+        // expired, corrupt or partial approval must never be stored.
+        if (deviceId.isBlank() || secret.isBlank() || endpoint == null || endpoint.host.isBlank() || endpoint.port <= 0) {
+            AgentStateStore.setConnectionState(ConnectionState.DISCONNECTED)
+            AgentStateStore.setError("Pairing approval was invalid or incomplete - try pairing again.")
+            AgentStateStore.setStatus("Pairing rejected")
+            socket?.close(1000, "Invalid pairing approval")
+            return
+        }
         val credential = DeviceCredential(
             deviceId = deviceId,
             deviceSecret = secret,
             deviceName = deviceName,
-            gatewayHost = currentEndpoint?.host.orEmpty(),
-            gatewayPort = currentEndpoint?.port ?: 8765,
+            gatewayHost = endpoint.host,
+            gatewayPort = endpoint.port,
         )
         storage.saveCredential(credential)
         currentCredential = credential
@@ -219,6 +248,7 @@ class BrahmaWebSocketClient(
                     BrahmaProtocol.PAIR_APPROVED -> handlePairApproved(root)
                     BrahmaProtocol.DEVICE_ONLINE -> {
                         AgentStateStore.setConnectionState(ConnectionState.CONNECTED)
+                        AgentStateStore.setError(null)
                         AgentStateStore.setStatus("Connected")
                     }
                     BrahmaProtocol.CAPABILITIES -> {

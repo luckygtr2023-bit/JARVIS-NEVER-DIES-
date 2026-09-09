@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name">J.A.R.V.I.S.</string>
+    <string name="full_name">Just A Rather Very Intelligent System</string>
+    <string name="owner_name">Lucky</string>
+    <string name="credit_line">Made by Lucky</string>
     <string name="accessibility_service_description">J.A.R.V.I.S. accessibility bridge for device control setup.</string>
 </resources>
