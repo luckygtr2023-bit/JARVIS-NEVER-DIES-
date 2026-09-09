@@ -71,3 +71,4 @@ homescreen background/out/
 .gradle/
 *.apk
 memory/chat_history.json
+config/brahma_connect/devices.json
