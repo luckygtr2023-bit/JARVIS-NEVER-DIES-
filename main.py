@@ -686,9 +686,14 @@ TOOL_DECLARATIONS = [
     {
         "name": "open_app",
         "description": (
-            "Opens any application on the Windows computer. "
-            "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
+            "Opens/launches any installed application on the computer (e.g. Brave, "
+            "Spotify, WhatsApp). Use this when the user asks to open, launch, or start "
+            "an app or program. For browsing/searching the web, use web_search or "
+            "browser_control instead. When the user asks to open an app AND search "
+            "(e.g. 'Open Brave and search for X'), open the app with this tool and then "
+            "STILL run web_search or browser_control search and answer with real results "
+            "- never stop after opening the app. Always call this tool; never just say "
+            "you opened it."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -703,7 +708,13 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "web_search",
-        "description": "Searches the web for any information.",
+        "description": (
+            "Performs a REAL web search and returns retrieved result snippets. "
+            "Use for any request that needs current or factual web information. "
+            "After it returns, read the retrieved results and answer the user's "
+            "question from them; never claim a search happened if the result says "
+            "it failed, and never invent facts that were not retrieved."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -2626,61 +2637,86 @@ class BrahmaLive:
 
 
     def _fallback_reply(self, text: str, memory_ctx: str = ""):
+        """Text-only reply path (used when the Live session is unavailable).
+
+        Routes the request through the J.A.R.V.I.S. reasoning pipeline so
+        plain questions are answered directly while explicit web-research and
+        browser-search requests run real searches and answer from retrieved
+        facts (or report the failure honestly)."""
         try:
             self.ui.set_state("THINKING")
             try:
                 self.ui.update_task_workspace(
                     status="Thinking",
-                    output="J.A.R.V.I.S. is drafting a direct reply.",
+                    output="J.A.R.V.I.S. is processing your request.",
                     percent=35,
                 )
             except Exception:
                 pass
-            reply = ""
-            gemini_first = not self._use_openrouter_first
-            request_text = f"{memory_ctx}\n\nCurrent User Request:\n{text}" if memory_ctx else text
-            ai_errors: list[str] = []
 
-            if gemini_first:
-                try:
-                    reply = _gemini_text_reply(request_text)
-                except Exception as e:
-                    ai_errors.append(f"Gemini: {e}")
-                    print(f"[J.A.R.V.I.S.] ⚠️ Gemini fallback failed: {e}")
-                    if _is_gemini_limit_error(e):
-                        self._use_openrouter_first = True
+            from agent.intent import IntentKind, classify_intent
+            from agent.reasoner import ReasoningPipeline, UnifiedChainAI
 
-            if not reply:
-                try:
-                    reply = openrouter_client.chat(
-                        request_text,
-                        system=(
-                            "You are J.A.R.V.I.S., a concise, helpful desktop assistant. "
-                            "Reply naturally and briefly. Do not mention internal implementation details."
-                        ),
+            intent = classify_intent(text)
+            print(f"[J.A.R.V.I.S.] 🔀 {intent.describe()}")
+
+            def _run_command(in_intent):
+                # Open-app requests are executable from the fallback path via
+                # the existing open_app action. Complex action commands are not.
+                if in_intent.kind == IntentKind.OPEN_APP:
+                    return open_app(
+                        parameters={"app_name": in_intent.app_name},
+                        response=None, player=self.ui,
                     )
-                except Exception as e:
-                    ai_errors.append(f"{getattr(openrouter_client, '_provider', 'OpenRouter')}: {e}")
-                    print(f"[J.A.R.V.I.S.] ⚠️ AI provider fallback failed: {e}")
-                    if gemini_first and not self._use_openrouter_first and _is_gemini_limit_error(e):
-                        self._use_openrouter_first = True
-            reply = (reply or "").strip()
-            if reply:
+                return None
+
+            pipeline = ReasoningPipeline(
+                ai=UnifiedChainAI(gemini_first=not self._use_openrouter_first),
+            )
+            result = pipeline.handle(text, memory_ctx=memory_ctx, command_runner=_run_command)
+
+            reply = (result.answer or "").strip()
+            if result.deferred_action:
+                reply = (
+                    "I'm running in text-only fallback mode, sir, so I can't execute that "
+                    "action right now. Restart the assistant or check the connection to "
+                    "restore the full session."
+                )
+                print(f"[J.A.R.V.I.S.] ⚠️ Action deferred (fallback mode): {text[:80]}")
                 self.ui.write_log(f"JARVIS: {reply}")
+            elif result.error:
+                if "AI UNAVAILABLE" in result.error:
+                    msg = f"AI PROVIDERS UNAVAILABLE — {result.error} Check config/api_keys.json and that Ollama is running."
+                else:
+                    msg = f"ERR: {result.error}"
+                reply = msg
+                print(f"[J.A.R.V.I.S.] ⚠️ {msg}")
+                self.ui.write_log(msg if msg.startswith("ERR:") else f"ERR: {msg}")
                 try:
-                    self.ui.finish_task_workspace(reply, "Reply delivered.", 100)
+                    self.ui.finish_task_workspace(reply, "Reply failed.", 100)
                 except Exception:
                     pass
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return
+            elif reply:
+                self.ui.write_log(f"JARVIS: {reply}")
             else:
-                # Never fake a success when every AI provider failed — surface a real error.
-                detail = "; ".join(ai_errors) if ai_errors else "No AI provider responded."
-                msg = f"AI PROVIDERS UNAVAILABLE — {detail} Check config/api_keys.json and that Ollama is running."
+                msg = "AI PROVIDERS UNAVAILABLE — No AI provider responded. Check config/api_keys.json and that Ollama is running."
                 print(f"[J.A.R.V.I.S.] ⚠️ {msg}")
                 self.ui.write_log(f"ERR: {msg}")
                 try:
                     self.ui.finish_task_workspace(msg, "Reply failed.", 100)
                 except Exception:
                     pass
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return
+
+            try:
+                self.ui.finish_task_workspace(reply, "Reply delivered.", 100)
+            except Exception:
+                pass
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
         except Exception as e:

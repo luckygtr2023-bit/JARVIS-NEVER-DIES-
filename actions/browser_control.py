@@ -1,11 +1,19 @@
 import asyncio
 import threading
 import concurrent.futures
+import os
 import platform
 import shutil
 import subprocess
 from pathlib import Path
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+
+try:
+    from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+    _PLAYWRIGHT_AVAILABLE = True
+except Exception:  # pragma: no cover - depends on host install
+    async_playwright = None
+    PlaywrightTimeout = None
+    _PLAYWRIGHT_AVAILABLE = False
 
 
 def _log(message: str) -> None:
@@ -162,6 +170,85 @@ def _find_browser_executable(prog_id: str) -> tuple:
     return "chromium", None, "chrome", False
 
 
+_WINDOWS_FIXED_PATHS = {
+    "brave": [
+        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+    ],
+    "chrome": [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ],
+    "vivaldi": [
+        r"C:\Program Files\Vivaldi\Application\vivaldi.exe",
+        r"C:\Program Files (x86)\Vivaldi\Application\vivaldi.exe",
+    ],
+    "opera": [
+        r"C:\Program Files\Opera\launcher.exe",
+        r"C:\Program Files (x86)\Opera\launcher.exe",
+    ],
+    "msedge": [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ],
+}
+
+
+def _resolve_preferred_browser(browser: str):
+    """Resolve a requested browser name to (engine, exe_path, channel, is_opera).
+
+    Returns (None, None, None, False) when the name is unknown / 'auto', which
+    tells the caller to keep the default-browser behaviour."""
+    name = (browser or "auto").lower().strip()
+    system = platform.system()
+    if name == "auto" or not name:
+        return None, None, None, False
+
+    if system == "Windows":
+        import winreg
+        app_key = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}.exe"
+        if name == "msedge":
+            app_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe"
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, app_key)
+            val = winreg.QueryValue(key, None)
+            winreg.CloseKey(key)
+            exe = (val or "").strip().strip('"').split('"')[0].split(" --")[0].strip()
+            if exe and Path(exe).exists():
+                _log(f"[Browser] 🔍 {name} found via registry: {exe}")
+                return "chromium", exe, None, name == "opera"
+        except Exception:
+            pass
+        for fixed in _WINDOWS_FIXED_PATHS.get(name, []):
+            expanded = os.path.expandvars(fixed)
+            if os.path.exists(expanded):
+                _log(f"[Browser] 🔍 {name} found: {expanded}")
+                return "chromium", expanded, None, name == "opera"
+
+    os_bins = {
+        "Darwin": {
+            "brave": ["brave browser", "brave"],
+            "chrome": ["google chrome", "google-chrome"],
+            "firefox": ["firefox"],
+            "edge": ["microsoft edge"],
+        },
+        "Linux": {
+            "brave": ["brave-browser", "brave"],
+            "chrome": ["google-chrome", "google-chrome-stable", "chromium"],
+            "firefox": ["firefox"],
+            "edge": ["microsoft-edge"],
+        },
+    }.get(system, {})
+    for binary in os_bins.get(name, []):
+        path = shutil.which(binary)
+        if path:
+            _log(f"[Browser] 🔍 {name} found on PATH: {path}")
+            return "chromium", path, None, False
+    if name == "firefox":
+        return "firefox", None, None, False
+    return None, None, None, False
+
+
 class _BrowserThread:
 
     def __init__(self):
@@ -177,6 +264,12 @@ class _BrowserThread:
         self._exe_path   = None
         self._channel    = None
         self._is_opera   = False
+        self._preferred_browser = "auto"
+
+    def use_browser(self, browser: str) -> None:
+        """Remember a preferred browser (e.g. 'brave') for the next launch."""
+        if browser and str(browser).strip().lower() not in ("auto", ""):
+            self._preferred_browser = str(browser).strip().lower()
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -195,6 +288,11 @@ class _BrowserThread:
         self._loop.run_forever()
 
     async def _init(self):
+        if not _PLAYWRIGHT_AVAILABLE:
+            raise RuntimeError(
+                "Browser automation is unavailable: Playwright is not installed "
+                "(run: pip install playwright && playwright install chromium)."
+            )
         self._playwright = await async_playwright().start()
 
     def run(self, coro, timeout: int = 30):
@@ -213,8 +311,19 @@ class _BrowserThread:
         if self._browser and self._browser.is_connected():
             return
 
-        prog_id = _get_default_browser_id()
-        self._engine_name, self._exe_path, self._channel, self._is_opera = _find_browser_executable(prog_id)
+        preferred = (getattr(self, "_preferred_browser", None) or "auto").lower().strip()
+        if preferred != "auto":
+            resolved = _resolve_preferred_browser(preferred)
+            if resolved[0] is not None:
+                self._engine_name, self._exe_path, self._channel, self._is_opera = resolved
+                _log(f"[Browser] 🎯 Preferred browser: {preferred}")
+            else:
+                _log(f"[Browser] ⚠️ Could not resolve preferred browser '{preferred}' — using default")
+                prog_id = _get_default_browser_id()
+                self._engine_name, self._exe_path, self._channel, self._is_opera = _find_browser_executable(prog_id)
+        else:
+            prog_id = _get_default_browser_id()
+            self._engine_name, self._exe_path, self._channel, self._is_opera = _find_browser_executable(prog_id)
         engine = getattr(self._playwright, self._engine_name)
 
         # Temel chromium argümanları
@@ -354,6 +463,93 @@ class _BrowserThread:
         except Exception as e:
             return f"Reload error: {e}"
 
+    async def _wait_for_results(self, timeout_ms: int = 12000) -> str:
+        """Wait for the results page to settle after submitting a search.
+
+        Honest result: reports whether navigation completed. Never fabricates
+        'results loaded' — callers combine this with actual text extraction.
+        """
+        page = await self._get_page()
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+        except Exception as e:
+            return f"Timed out waiting for page load: {e}"
+        try:
+            await page.wait_for_load_state("networkidle", timeout=4000)
+        except Exception:
+            pass  # networkidle is best-effort; DOM load above is authoritative
+        return f"Page loaded: {page.url}"
+
+    async def _extract_search_results(self, engine: str = "google",
+                                      max_results: int = 8) -> str:
+        """Extract real search-result snippets from the current results page.
+
+        Uses engine-specific locators first, then falls back to parsing the
+        page's visible text. An honest empty string is returned when nothing
+        can be extracted — callers must never treat that as results.
+        """
+        page = await self._get_page()
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=12000)
+        except Exception:
+            pass
+
+        engine = (engine or "google").lower()
+        title_selectors = {
+            "google": ["div#search h3", "h3"],
+            "bing": ["li.b_algo h2", "h2"],
+            "duckduckgo": ['article[data-testid="result"] h2', "h2"],
+            "brave": ['div.snippet h3, .snippet-title', "h3"],
+        }
+        selectors = title_selectors.get(engine, title_selectors["google"])
+
+        collected = []
+        try:
+            for sel in selectors:
+                loc = page.locator(sel)
+                count = min(await loc.count(), max_results)
+                if count == 0:
+                    continue
+                for i in range(count):
+                    try:
+                        title = (await loc.nth(i).inner_text()).strip()
+                        url = ""
+                        try:
+                            link = loc.nth(i).locator("xpath=ancestor::a[1]")
+                            href = await link.get_attribute("href")
+                            if href and str(href).startswith("http"):
+                                url = href
+                        except Exception:
+                            pass
+                        if title:
+                            collected.append(f"{len(collected) + 1}. {title}" + (f"\n   {url}" if url else ""))
+                        if len(collected) >= max_results:
+                            break
+                    except Exception:
+                        continue
+                if collected:
+                    break
+        except Exception as e:
+            return f"Extraction error: {e}"
+
+        if collected:
+            return "\n".join(collected)
+
+        # Fallback: parse visible page text (pure parser in agent.research).
+        try:
+            text = await self._get_text()
+            from agent.research import parse_search_results
+            parsed = parse_search_results(text, engine=engine, max_results=max_results)
+            if parsed:
+                return "\n".join(
+                    f"{r.rank}. {r.title}" + (f"\n   {r.url}" if r.url else "")
+                    + (f"\n   {r.snippet}" if r.snippet else "")
+                    for r in parsed
+                )
+        except Exception:
+            pass
+        return ""  # honest: nothing parseable
+
     # ── Eylemler ─────────────────────────────────────────────────────────────
 
     async def _go_to(self, url: str) -> str:
@@ -373,6 +569,7 @@ class _BrowserThread:
             "google":     f"https://www.google.com/search?q={query.replace(' ', '+')}",
             "bing":       f"https://www.bing.com/search?q={query.replace(' ', '+')}",
             "duckduckgo": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
+            "brave":      f"https://search.brave.com/search?q={query.replace(' ', '+')}",
         }
         url = engines.get(engine.lower(), engines["google"])
         return await self._go_to(url)
@@ -536,10 +733,13 @@ def browser_control(
     parameters:
         action      : go_to | navigate | search | click | type | scroll | fill_form |
                       smart_click | smart_type | get_text | press | back | forward |
-                      refresh | open_tab | new_tab | switch_tab | list_tabs | close
+                      refresh | open_tab | new_tab | switch_tab | list_tabs | close |
+                      wait_for_results | extract_search_results
         url         : URL for go_to
         query       : search query
-        engine      : google | bing | duckduckgo (default: google)
+        engine      : google | bing | duckduckgo | brave (default: google)
+        browser     : preferred browser executable: brave | chrome | vivaldi | edge |
+                      firefox | opera | auto (default: auto / system default)
         selector    : CSS selector for click/type
         text        : text to click or type
         description : element description for smart_click/smart_type
@@ -549,20 +749,43 @@ def browser_control(
         fields      : {selector: value} dict for fill_form
         clear_first : bool, clear input before typing (default: True)
         tab         : 1-based tab index for switch_tab
+        timeout_ms  : ms to wait for wait_for_results (default 12000)
+        max_results : number of results for extract_search_results (default 8)
     """
+    if not _PLAYWRIGHT_AVAILABLE:
+        return (
+            "Browser automation is unavailable: Playwright is not installed. "
+            "Run: pip install playwright && playwright install chromium"
+        )
+
     _ensure_started()
 
-    action = (parameters or {}).get("action", "").lower().strip()
+    params = parameters or {}
+    action = (params or {}).get("action", "").lower().strip()
     result = "Unknown action."
+
+    # A requested browser name (e.g. Brave) is applied on the next launch.
+    _bt.use_browser(params.get("browser", "auto"))
 
     try:
         if action in {"go_to", "navigate"}:
-            result = _bt.run(_bt._go_to(parameters.get("url", "")))
+            result = _bt.run(_bt._go_to(params.get("url", "")))
 
         elif action == "search":
             result = _bt.run(_bt._search(
-                parameters.get("query", ""),
-                parameters.get("engine", "google"),
+                params.get("query", ""),
+                params.get("engine", "google"),
+            ))
+
+        elif action == "wait_for_results":
+            result = _bt.run(_bt._wait_for_results(
+                int(params.get("timeout_ms", 12000) or 12000),
+            ))
+
+        elif action == "extract_search_results":
+            result = _bt.run(_bt._extract_search_results(
+                params.get("engine", "google"),
+                int(params.get("max_results", 8) or 8),
             ))
 
         elif action == "click":
