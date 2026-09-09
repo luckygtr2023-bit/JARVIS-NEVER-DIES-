@@ -132,3 +132,73 @@ def test_no_product_branding_leftovers():
         for fragment in ["\"Brah\"", "BRAHMA ECHO", "Brahma Echo Remote",
                          "Brahma AI - Lite", "I'm Brahma", "Launch Brahma"]:
             assert fragment not in text, f"{rel} contains {fragment!r}"
+
+
+# ---------------------------------------------------------------------------
+# HUD dashboard / chat redesign milestone (reactor, panels, navigation, layout)
+# ---------------------------------------------------------------------------
+
+def test_dashboard_layout_uses_window_space():
+    """STATIC PASS — dashboard centre is a populated command-centre layout
+    (telemetry panels, live reactor, AI-router panel, quick actions, input bar),
+    no longer a mostly-hidden blank stage."""
+    ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+    assert "SYSTEM TELEMETRY" in ui              # live stat cards
+    assert "ReactorArena" in ui                  # reactor stage panel
+    assert "AI ROUTER" in ui                     # real provider status panel
+    assert "J.A.R.V.I.S. LINK" in ui             # link/status card
+    assert "QSplitter" in ui                     # re-sizable hero columns
+    assert "hero.setSizes(" in ui
+    assert "_refresh_dashboard_link_values" in ui
+    assert "self.hud.hide()" not in ui           # reactor is visible
+    assert "stage.addWidget(self._core_status_lbl)" in ui
+    assert "_build_command_row()" in ui          # bottom voice/input bar
+
+
+def test_dashboard_quick_actions():
+    """STATIC PASS — quick-action chips exist for chat/voice/example prompts."""
+    ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+    for marker in ["What can you do?", "Today's briefing", "Open chat",
+                   "Voice / mute", "System status"]:
+        assert marker in ui, marker
+    assert "self._toggle_mute()" in ui           # voice control wired
+    assert "_switch_to(\"chat\")" in ui or '_switch_to("chat")' in ui
+
+
+def test_chat_ui_content():
+    """STATIC PASS — chat surfaces: full-page Chat + dashboard rail mirror
+    with history, message bubbles and empty-state quick actions."""
+    ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+    assert '"chat": 4' in ui                     # Chat tab maps to the chat page
+    assert "InlineChatWorkspace" in ui
+    assert "command_submitted" in ui
+    assert "Try asking J.A.R.V.I.S." in ui
+    assert "Create Presentation" in ui
+    assert "ChatBubble" in ui
+    assert "_rail_chat" in ui                    # dashboard chat mirror
+    assert "_feed_only" in ui                    # mirror never double-writes store
+    assert "_chat_mirrors" in ui
+    assert "reload_active_conversation" in ui
+
+
+def test_made_by_lucky_rendered_sites():
+    """STATIC PASS — 'Made by Lucky' appears in rendered widgets across the
+    chrome: top taskbar, global footer, dashboard link card and About."""
+    ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+    assert ui.count("Made by Lucky") >= 4
+
+
+def test_responsive_layout_no_collapse():
+    """STATIC PASS — rails are collapsible and the hero uses a splitter with
+    stretch factors + size floors so no giant empty regions form."""
+    ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+    assert "_left_collapsed" in ui and "_right_collapsed" in ui
+    assert "56 if self._left_collapsed else _LEFT_W" in ui
+    assert "56 if self._right_collapsed else _RIGHT_W" in ui
+    assert "hero.setStretchFactor(1, 1)" in ui   # reactor column takes the space
+    assert "arena.setMinimumSize(300, 260)" in ui
+    assert "left_col.setMaximumWidth(252)" in ui
+    assert "right_col.setMaximumWidth(286)" in ui
+    assert 'setMinimumSize(_MIN_W, _MIN_H)' in ui
+    assert "_mw < 1450 and not self._right_collapsed" in ui   # auto rail collapse
+    assert "_mw < 1240 and not self._left_collapsed" in ui

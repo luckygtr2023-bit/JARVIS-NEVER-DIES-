@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QMenu, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSlider, QTextBrowser, QTextEdit,
     QGraphicsDropShadowEffect,
     QStyle, QSystemTrayIcon, QVBoxLayout, QWidget, QProgressBar,
-    QStackedWidget, QInputDialog, QMessageBox,
+    QSplitter, QStackedWidget, QInputDialog, QMessageBox,
 )
 
 try:
@@ -3417,6 +3417,7 @@ class InlineChatWorkspace(QFrame):
         self.setObjectName("InlineChatWorkspace")
         self._store = workspace_store()
         self._active_conversation_id: str | None = None
+        self._feed_only = False
         self.setStyleSheet(
             """
             QFrame#InlineChatWorkspace {
@@ -3670,11 +3671,36 @@ class InlineChatWorkspace(QFrame):
             self._feed.load_messages(convo.get("messages") or [])
         self._refresh_history()
 
+    def reload_active_conversation(self):
+        """Re-read the active conversation from the store (display-only mirrors)."""
+        try:
+            self._ensure_conversation()
+            convo = self._store.get_conversation(self._active_conversation_id)
+            if convo:
+                self._feed.load_messages(convo.get("messages") or [])
+                self._hide_memories()
+        except Exception:
+            pass
+
     def record_chat_event(self, event: object):
         data = event if isinstance(event, dict) else {}
         role = (data.get("role") or "").strip().lower()
         text = (data.get("text") or data.get("content") or "").strip()
         if not role or not text:
+            return
+        if getattr(self, "_feed_only", False):
+            # Display-only mirror instance (dashboard rail chat): reflect the
+            # event into the visible feed WITHOUT writing it to the store again.
+            attachments = data.get("attachments") or []
+            stamp = _fmt_time_stamp(data.get("timestamp"))
+            if role == "user":
+                self._feed.add_message("user", "You", text, stamp, attachments=attachments)
+            elif role == "system":
+                self._feed.add_message("system", "System", text, stamp, attachments=attachments, event_type=text)
+            elif role == "file":
+                self._feed.add_message("file", "Files", text, stamp, attachments=attachments)
+            else:
+                self._feed.add_message("assistant", "J.A.R.V.I.S.", text, stamp, attachments=attachments, animate=True)
             return
         convo_id = data.get("conversation_id") or self._ensure_conversation(text if role == "user" else None)
         attachments = data.get("attachments") or []
@@ -7042,8 +7068,19 @@ class MainWindow(QMainWindow):
         self._taskbar = QWidget()
         self._taskbar.setStyleSheet("background: transparent;")
         taskbar_lay = QHBoxLayout(self._taskbar)
-        taskbar_lay.setContentsMargins(10, 10, 10, 10)
-        
+        taskbar_lay.setContentsMargins(12, 8, 12, 8)
+        taskbar_lay.setSpacing(10)
+
+        _tb_logo = QLabel()
+        _tb_logo.setPixmap(_logo_pixmap(24))
+        _tb_logo.setFixedSize(26, 26)
+        _tb_logo.setScaledContents(True)
+        taskbar_lay.addWidget(_tb_logo)
+        _tb_word = QLabel("J.A.R.V.I.S.")
+        _tb_word.setFont(QFont("Segoe UI", 14, QFont.Weight.Black))
+        _tb_word.setStyleSheet(f"color: {C.PRI}; background: transparent; letter-spacing: 1px;")
+        taskbar_lay.addWidget(_tb_word)
+
         self._btn_dashboard = QPushButton("Dashboard")
         self._btn_chat = QPushButton("Chat")
         self._btn_settings = QPushButton("Settings")
@@ -7051,29 +7088,43 @@ class MainWindow(QMainWindow):
         for btn in (self._btn_dashboard, self._btn_chat, self._btn_settings):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(f"QPushButton {{ background: rgba(12,14,18,200); color: {C.WHITE}; border: 1px solid {C.BORDER_B}; border-radius: 8px; padding: 5px 15px; font-weight: bold; font-family: 'Segoe UI'; font-size: 13px; }} QPushButton:hover {{ color: {C.PRI}; border: 1px solid {C.PRI}; }}")
-        
+
         taskbar_lay.addStretch()
         taskbar_lay.addWidget(self._btn_dashboard)
         taskbar_lay.addWidget(self._btn_chat)
         taskbar_lay.addWidget(self._btn_settings)
         taskbar_lay.addStretch()
-        
+        _tb_credit = QLabel("Made by Lucky")
+        _tb_credit.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        _tb_credit.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        taskbar_lay.addWidget(_tb_credit)
+
         root.addWidget(self._taskbar)
 
         self._floating_gesture_card = FloatingGestureCard(self.centralWidget())
         self._floating_gesture_card.show()
 
+        # Three-rail chrome: left navigation rail, live centre stage, right
+        # chat/connectivity rail. Sidebars stay collapsible (Ctrl+[/Ctrl+]).
+        self._chat_mirrors: list = []
+        self._left_panel = self._build_left_panel_modern()
         self._center_panel = self._build_center_panel_modern(face_path)
+        self._right_panel = self._build_right_panel_modern()
+        body.addWidget(self._left_panel)
         body.addWidget(self._center_panel, stretch=1)
+        body.addWidget(self._right_panel)
         _attach_pulse_glow(self._center_panel, color=C.PRI, blur_min=6.0, blur_max=14.0, alpha=36, period_ms=4200)
 
-
-
-        self._btn_dashboard.clicked.connect(lambda: self._center_stack.setCurrentIndex(0))
-        self._btn_chat.clicked.connect(lambda: self._center_stack.setCurrentIndex(4))
-        self._btn_settings.clicked.connect(lambda: self._center_stack.setCurrentIndex(5))
+        self._btn_dashboard.clicked.connect(lambda: self._switch_to("dashboard"))
+        self._btn_chat.clicked.connect(lambda: self._switch_to("chat"))
+        self._btn_settings.clicked.connect(lambda: self._switch_to("settings"))
 
         root.addLayout(body, stretch=1)
+        root.addWidget(self._build_footer())
+
+        # Rails exist now -> synchronise collapse state and open the dashboard.
+        self._apply_sidebar_state()
+        self._switch_to("dashboard")
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
@@ -7423,7 +7474,7 @@ class MainWindow(QMainWindow):
     def _set_page(self, page: str):
         self._current_page = page
         if hasattr(self, "_center_stack") and isinstance(self._center_stack, QStackedWidget):
-            index = {"dashboard": 0, "home": 1, "devices": 2, "settings": 3}.get(page, 0)
+            index = {"dashboard": 0, "chat": 4, "home": 1, "devices": 2, "connect": 3, "settings": 5}.get(page, 0)
             self._center_stack.setCurrentIndex(index)
         if page == "devices" and hasattr(self, "_devices_page"):
             try:
@@ -7440,26 +7491,85 @@ class MainWindow(QMainWindow):
                 self._smart_devices_section.refresh(force=True)
             except Exception:
                 pass
+        if page == "dashboard":
+            try:
+                self._refresh_dashboard_link_values()
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "_rail_chat") and self._rail_chat is not None:
+                    self._rail_chat.reload_active_conversation()
+            except Exception:
+                pass
         if hasattr(self, "_right_panel"):
             self._right_panel.setVisible(page == "dashboard")
         if hasattr(self, "_right_stack") and isinstance(self._right_stack, QStackedWidget):
-            self._right_stack.setCurrentIndex({"dashboard": 0, "settings": 1, "home": 2}.get(page, 2))
+            self._right_stack.setCurrentIndex({"dashboard": 0, "connect": 1, "home": 2}.get(page, 2))
             self._right_stack.setVisible(page == "dashboard")
         if self._settings_bridge and hasattr(self._settings_bridge, "set_dashboard_page"):
             try:
                 self._settings_bridge.set_dashboard_page(page == "dashboard")
             except Exception:
                 pass
-        if page == "settings" and hasattr(self, "_settings_page"):
+        if page in ("connect", "settings") and hasattr(self, "_settings_page"):
             try:
                 self._settings_page.refresh()
             except Exception:
                 pass
-        if page == "settings" and hasattr(self, "_settings_sidebar"):
+        if page in ("connect", "settings") and hasattr(self, "_settings_sidebar"):
             try:
                 self._settings_sidebar.refresh()
             except Exception:
                 pass
+
+    def _memory_online(self) -> bool:
+        try:
+            workspace_store()
+            return True
+        except Exception:
+            return False
+
+    def _refresh_dashboard_link_values(self):
+        """Refresh the AI-ROUTER panel on the dashboard from real configuration."""
+        try:
+            settings = self._load_app_settings()
+        except Exception:
+            settings = {}
+        try:
+            prov = str(settings.get("default_ai_provider") or "OpenRouter").strip()
+            human = {"Gemini": "Gemini", "OpenRouter": "OpenRouter",
+                     "Local": "Local (Ollama)", "OmniRoute": "OmniRoute"}.get(prov, prov)
+            if prov == "Local":
+                model = str(settings.get("local_ai_model") or "llama3.2").strip()
+                human = f"Local \u00b7 {model}"
+            if hasattr(self, "_dash_provider_lbl"):
+                self._dash_provider_lbl.setText(human)
+            if hasattr(self, "_dash_omni_lbl"):
+                omni_on = bool(settings.get("omniroute_enabled", False))
+                omni_url = str(settings.get("omniroute_url") or "").rstrip("/")
+                self._dash_omni_lbl.setText((omni_url or "not configured") if omni_on else "Disabled")
+            if hasattr(self, "_dash_mem_lbl"):
+                self._dash_mem_lbl.setText("Online" if self._memory_online() else "Unavailable")
+            if hasattr(self, "_dash_net_lbl"):
+                self._dash_net_lbl.setText(_active_net_label())
+            if hasattr(self, "_dash_dev_lbl"):
+                if getattr(self, "_brahma_connect", None) is not None:
+                    self._dash_dev_lbl.setText("Gateway ready")
+                else:
+                    self._dash_dev_lbl.setText("Standby")
+        except Exception:
+            pass
+
+    def _switch_to(self, page: str):
+        """Unified page navigation: highlights the matching nav item, then
+        routes through _set_page so rails/pages refresh consistently."""
+        try:
+            if hasattr(self, "_nav_items"):
+                for _name, _item in self._nav_items.items():
+                    _item.set_active(_name == page)
+        except Exception:
+            pass
+        self._set_page(page)
 
     def set_brahma_connect_service(self, service):
         self._brahma_connect = service
@@ -7471,6 +7581,19 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         if event:
             super().resizeEvent(event)
+        # Responsive rails: auto-collapse when the window gets narrow so the
+        # centre stage never squashes into clipped/blank regions.
+        try:
+            if hasattr(self, "_right_panel") and hasattr(self, "_left_panel"):
+                _mw = self.width()
+                if _mw < 1450 and not self._right_collapsed:
+                    self._right_collapsed = True
+                    self._apply_sidebar_state()
+                if _mw < 1240 and not self._left_collapsed:
+                    self._left_collapsed = True
+                    self._apply_sidebar_state()
+        except Exception:
+            pass
         if self._overlay and self._overlay.isVisible() and self.centralWidget():
             cw = self.centralWidget()
             self._overlay.setGeometry(0, 0, cw.width(), cw.height())
@@ -7633,7 +7756,7 @@ class MainWindow(QMainWindow):
                 greeting = "Good Afternoon"
             else:
                 greeting = "Good Evening"
-            name = os.getenv("USERNAME") or os.getenv("USER") or "Suryaansh"
+            name = os.getenv("USERNAME") or os.getenv("USER") or "Lucky"
             self._core_lbl.setText(f"{greeting}, {name}")
         if hasattr(self, "_core_sub_lbl") and self._core_sub_lbl is not None:
             self._core_sub_lbl.setText("Ready to assist.")
@@ -7824,7 +7947,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_fl("[F4] Mute  Â·  [F11] Fullscreen"))
+        lay.addWidget(_fl("[F4] Mute   ·   [F11] Fullscreen"))
         lay.addStretch()
         lay.addWidget(_fl("Original: Brahma Echo by Suryaansh Tiwari"))
         lay.addStretch()
@@ -8508,9 +8631,7 @@ class MainWindow(QMainWindow):
 
         self._nav_items: dict[str, NavItem] = {}
         def activate(page: str):
-            for name, item in self._nav_items.items():
-                item.set_active(name == page)
-            self._set_page(page)
+            self._switch_to(page)
 
         brand = QWidget()
         brand_lay = QHBoxLayout(brand)
@@ -8530,23 +8651,16 @@ class MainWindow(QMainWindow):
         brand_lay.addLayout(brand_text)
         lay.addWidget(brand)
 
-        lay.addWidget(section("Workspace"))
-        self._nav_items["dashboard"] = NavItem("Dashboard", active=True, letter="[]")
+        lay.addWidget(section("Navigation"))
+        self._nav_items["dashboard"] = NavItem("Dashboard", active=True, letter="D")
+        self._nav_items["chat"] = NavItem("Chat", active=False, letter="C")
         self._nav_items["home"] = NavItem("J.A.R.V.I.S. Home", active=False, letter="H")
-        self._nav_items["devices"] = NavItem("Devices", active=False, letter="D")
-        self._nav_items["settings"] = NavItem("System & Connect", letter="S")
-        self._nav_items["dashboard"].clicked.connect(lambda: activate("dashboard"))
-        self._nav_items["home"].clicked.connect(lambda: activate("home"))
-        self._nav_items["devices"].clicked.connect(lambda: activate("devices"))
-        self._nav_items["settings"].clicked.connect(lambda: activate("settings"))
-        lay.addWidget(self._nav_items["dashboard"])
-        lay.addWidget(self._nav_items["home"])
-        lay.addWidget(self._nav_items["devices"])
-        lay.addWidget(self._nav_items["settings"])
-
-        self._gesture_preview = GestureCameraPreview()
-        self._gesture_preview.setFixedHeight(230)
-        lay.addWidget(self._gesture_preview)
+        self._nav_items["devices"] = NavItem("Devices", active=False, letter="D2")
+        self._nav_items["connect"] = NavItem("System & Connect", active=False, letter="S")
+        self._nav_items["settings"] = NavItem("Settings & About", active=False, letter="S2")
+        for _key in ("dashboard", "chat", "home", "devices", "connect", "settings"):
+            self._nav_items[_key].clicked.connect(lambda _=False, k=_key: activate(k))
+            lay.addWidget(self._nav_items[_key])
 
         lay.addStretch(1)
 
@@ -8614,20 +8728,44 @@ class MainWindow(QMainWindow):
         stage_frame.setObjectName("StageFrame")
         stage_frame.setStyleSheet("QFrame#StageFrame { background: transparent; border: none; }")
         stage = QVBoxLayout(stage_frame)
-        stage.setContentsMargins(26, 22, 26, 0)
-        stage.setSpacing(14)
+        stage.setContentsMargins(14, 8, 14, 6)
+        stage.setSpacing(10)
         lay.addWidget(stage_frame, stretch=1)
 
-        # Internal labels kept as hidden placeholders for safety
-        self._core_lbl = QLabel()
-        self._core_sub_lbl = QLabel()
-        self._core_status_lbl = QLabel()
-        self._clock_lbl = QLabel()
-        self._date_lbl = QLabel()
-        self._time_status_lbl = QLabel()
-        self._cpu_lbl = QLabel()
-        self._ram_lbl = QLabel()
-        self._status_chip = QLabel()
+        # ---------- live label members (updated by _tick_clock / _update_metrics / _apply_state) ----------
+        self._core_lbl = QLabel("INITIALISING ...")
+        self._core_lbl.setFont(QFont("Segoe UI", 17, QFont.Weight.Bold))
+        self._core_lbl.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
+        self._core_sub_lbl = QLabel("Just A Rather Very Intelligent System")
+        self._core_sub_lbl.setFont(QFont("Segoe UI", 8))
+        self._core_sub_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; letter-spacing: 1px;")
+        self._clock_lbl = QLabel("--:--")
+        self._clock_lbl.setFont(QFont("Courier New", 20, QFont.Weight.Bold))
+        self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._date_lbl = QLabel("")
+        self._date_lbl.setFont(QFont("Courier New", 8))
+        self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._time_status_lbl = QLabel("SYSTEM STANDBY")
+        self._time_status_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._time_status_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; letter-spacing: 1px;")
+        self._time_status_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._cpu_lbl = QLabel("CPU --")
+        self._cpu_lbl.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        self._cpu_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        self._ram_lbl = QLabel("RAM --")
+        self._ram_lbl.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        self._ram_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        self._status_chip = QLabel("READY")
+        self._status_chip.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        self._status_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._core_status_lbl = QLabel("J.A.R.V.I.S. is initialising ...")
+        self._core_status_lbl.setFont(QFont("Segoe UI", 9))
+        self._core_status_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._core_status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Hidden/infrastructure members kept for the rest of the window logic.
         self._smart_devices_section = SmartDevicesSection(self)
         self._smart_devices_section.hide()
         self._briefing_card = QFrame()
@@ -8636,7 +8774,6 @@ class MainWindow(QMainWindow):
         self._developer_card = QFrame()
         self._developer_card.hide()
         self._developer_status_lbl = QLabel()
-
         self._command_card = SmallPanelCard("COMMAND", "hey", accent=C.WHITE)
         self._command_card.setFixedWidth(185)
         self._result_card = SmallPanelCard("ACTION RESULT", "Action completed", accent=C.WHITE)
@@ -8644,33 +8781,209 @@ class MainWindow(QMainWindow):
         self._command_card.hide()
         self._result_card.hide()
 
+        # ---------- header strip: identity / clock / state ----------
+        header_row = QHBoxLayout()
+        header_row.setSpacing(16)
+        id_col = QVBoxLayout()
+        id_col.setSpacing(1)
+        id_col.addWidget(self._core_lbl)
+        id_col.addWidget(self._core_sub_lbl)
+        header_row.addLayout(id_col)
+        header_row.addStretch(1)
+        stat_col = QVBoxLayout()
+        stat_col.setSpacing(1)
+        clock_row = QHBoxLayout()
+        clock_row.setSpacing(8)
+        clock_row.addWidget(self._cpu_lbl)
+        clock_row.addWidget(self._ram_lbl)
+        clock_row.addStretch(1)
+        clock_row.addWidget(self._clock_lbl)
+        stat_col.addLayout(clock_row)
+        date_row = QHBoxLayout()
+        date_row.addStretch(1)
+        date_row.addWidget(self._date_lbl)
+        stat_col.addLayout(date_row)
+        chip_row = QHBoxLayout()
+        chip_row.addStretch(1)
+        chip_row.addWidget(self._time_status_lbl)
+        chip_row.addWidget(self._status_chip)
+        stat_col.addLayout(chip_row)
+        header_row.addLayout(stat_col)
+        stage.addLayout(header_row)
+        stage.addWidget(self._core_status_lbl)
+
+        # ---------- hero: telemetry | reactor | link status ----------
+        hero = QSplitter(Qt.Orientation.Horizontal)
+        hero.setChildrenCollapsible(False)
+        hero.setHandleWidth(2)
+
+        def _panel_card():
+            card = QFrame()
+            card.setStyleSheet(
+                "QFrame { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                "stop:0 rgba(14, 16, 21, 235), stop:1 rgba(7, 9, 13, 230)); "
+                "border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 16px; }"
+            )
+            return card
+
+        # ---- left: live telemetry cards (updated by the 2s metric timer) ----
+        left_col = QWidget()
+        left_col.setMinimumWidth(168)
+        left_col.setMaximumWidth(252)
+        left_lay = QVBoxLayout(left_col)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.setSpacing(8)
+        tel_head = QLabel("SYSTEM TELEMETRY")
+        tel_head.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        tel_head.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; letter-spacing: 1px;")
+        left_lay.addWidget(tel_head)
+        self._stat_cpu = StatCard("CPU LOAD", "--")
+        self._stat_mem = StatCard("MEMORY", "--")
+        self._stat_net = StatCard("NETWORK", "--")
+        self._stat_cam = StatCard("CAMERA", "--")
+        for _sc in (self._stat_cpu, self._stat_mem, self._stat_net, self._stat_cam):
+            left_lay.addWidget(_sc, 1)
+        left_lay.addStretch(0)
+
+        # ---- center: live J.A.R.V.I.S. arc reactor ----
+        arena = QFrame()
+        arena.setObjectName("ReactorArena")
+        arena.setMinimumSize(300, 260)
+        arena.setStyleSheet(
+            "QFrame#ReactorArena { background: qradialgradient(cx:0.5, cy:0.5, radius:0.72, "
+            "fx:0.5, fy:0.5, stop:0 rgba(12, 16, 22, 200), stop:0.7 rgba(5, 7, 10, 235), "
+            "stop:1 rgba(2, 3, 5, 250)); "
+            "border: 1px solid rgba(255, 179, 0, 0.16); border-radius: 18px; }"
+        )
+        arena_lay = QVBoxLayout(arena)
+        arena_lay.setContentsMargins(6, 6, 6, 6)
         self.hud = HudCanvas(face_path)
+        self.hud.setMinimumSize(280, 280)
+        self.hud.setMaximumSize(640, 640)
         self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.hud.setMinimumSize(240, 240)
-        self.hud.setMaximumSize(280, 280)
-        self.hud.hide()
-        hud_wrap = QFrame()
-        hud_wrap.setStyleSheet("background: transparent;")
-        hud_lay = QVBoxLayout(hud_wrap)
-        hud_lay.setContentsMargins(0, 0, 0, 0)
-        hud_lay.setSpacing(0)
-        hud_lay.addWidget(self.hud, alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-        hud_wrap.hide()
+        arena_lay.addWidget(self.hud, 1)
 
-        command_row = QHBoxLayout()
-        command_row.setSpacing(14)
-        command_row.addWidget(self._command_card, alignment=Qt.AlignmentFlag.AlignVCenter)
-        command_row.addWidget(hud_wrap, stretch=1)
-        command_row.addWidget(self._result_card, alignment=Qt.AlignmentFlag.AlignVCenter)
-        stage.addLayout(command_row, stretch=1)
+        # ---- right: AI router + link status (real configuration read) ----
+        right_col = QWidget()
+        right_col.setMinimumWidth(186)
+        right_col.setMaximumWidth(286)
+        right_lay = QVBoxLayout(right_col)
+        right_lay.setContentsMargins(0, 0, 0, 0)
+        right_lay.setSpacing(8)
 
+        router_card = _panel_card()
+        r_lay = QVBoxLayout(router_card)
+        r_lay.setContentsMargins(14, 12, 14, 12)
+        r_lay.setSpacing(8)
+        r_head = QLabel("AI ROUTER")
+        r_head.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        r_head.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; letter-spacing: 1px;")
+        r_lay.addWidget(r_head)
+        def _row(lbl):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            k = QLabel(lbl)
+            k.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            k.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            v = QLabel("--")
+            v.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+            v.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+            v.setAlignment(Qt.AlignmentFlag.AlignRight)
+            v.setWordWrap(True)
+            row.addWidget(k)
+            row.addStretch(1)
+            row.addWidget(v, 1)
+            return row, v
+        row_prov, self._dash_provider_lbl = _row("PROVIDER")
+        row_omni, self._dash_omni_lbl = _row("OMNIROUTE")
+        row_mem, self._dash_mem_lbl = _row("MEMORY")
+        row_net, self._dash_net_lbl = _row("NETWORK")
+        row_dev, self._dash_dev_lbl = _row("DEVICE LINK")
+        r_lay.addLayout(row_prov)
+        r_lay.addLayout(row_omni)
+        r_lay.addLayout(row_mem)
+        r_lay.addLayout(row_net)
+        r_lay.addLayout(row_dev)
+        r_lay.addStretch(1)
+
+        link_card = _panel_card()
+        lk_lay = QVBoxLayout(link_card)
+        lk_lay.setContentsMargins(14, 12, 14, 12)
+        lk_lay.setSpacing(8)
+        lk_head = QLabel("J.A.R.V.I.S. LINK")
+        lk_head.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        lk_head.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; letter-spacing: 1px;")
+        lk_lay.addWidget(lk_head)
+        lk_line = QLabel("Secure local routing · voice pipeline · memory + device trust active. "
+                         "Route: Local Ollama → OmniRoute gateway → OpenRouter / Gemini.")
+        lk_line.setWordWrap(True)
+        lk_line.setFont(QFont("Segoe UI", 8))
+        lk_line.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lk_lay.addWidget(lk_line)
+        lk_note = QLabel("Made by Lucky")
+        lk_note.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        lk_note.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
+        lk_lay.addWidget(lk_note)
+        lk_lay.addStretch(1)
+
+        right_lay.addWidget(router_card, 3)
+        right_lay.addWidget(link_card, 2)
+
+        hero.addWidget(left_col)
+        hero.addWidget(arena)
+        hero.addWidget(right_col)
+        hero.setStretchFactor(0, 0)
+        hero.setStretchFactor(1, 1)
+        hero.setStretchFactor(2, 0)
+        hero.setSizes([210, 380, 220])
+        stage.addWidget(hero, 1)
+
+        # ---------- command dock: quick actions + voice/input bar ----------
         self._command_panel = QWidget()
         self._command_panel.setStyleSheet("background: transparent;")
         cmd_lay = QVBoxLayout(self._command_panel)
-        cmd_lay.setContentsMargins(0, 0, 0, 16)
-        cmd_lay.setSpacing(10)
+        cmd_lay.setContentsMargins(0, 0, 0, 4)
+        cmd_lay.setSpacing(8)
+
+        def _make_chip(text: str) -> QPushButton:
+            chip = QPushButton(text)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setFixedHeight(30)
+            chip.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            chip.setStyleSheet(
+                "QPushButton { background: rgba(255, 255, 255, 0.04); color: rgba(255,255,255,0.78); "
+                "border: 1px solid rgba(255, 179, 0, 0.22); border-radius: 15px; padding: 0 12px; }"
+                "QPushButton:hover { background: rgba(255, 179, 0, 0.14); color: #ffffff; "
+                "border: 1px solid rgba(255, 179, 0, 0.55); }"
+            )
+            return chip
+
+        quick_row = QHBoxLayout()
+        quick_row.setSpacing(8)
+        quick_items = [
+            ("✨ What can you do?", None),
+            ("🕒 Time & date", None),
+            ("📅 Today's briefing", None),
+            ("📋 System status", None),
+            ("💬 Open chat", "chat"),
+            ("🎤 Voice / mute", "mic"),
+        ]
+        for _qtxt, _qact in quick_items:
+            _qb = _make_chip(_qtxt)
+            if _qact == "chat":
+                _qb.clicked.connect(lambda _=False: self._switch_to("chat"))
+            elif _qact == "mic":
+                _qb.clicked.connect(lambda _=False: self._toggle_mute())
+            else:
+                _qb.clicked.connect(lambda _=False, _t=_qtxt: (self._input.setText(_t.split(" ", 1)[1]), self._input.setFocus()))
+            quick_row.addWidget(_qb)
+        quick_row.addStretch(1)
+        cmd_lay.addLayout(quick_row)
         cmd_lay.addLayout(self._build_command_row())
         stage.addWidget(self._command_panel)
+
+        # Live values for the AI-router panel.
+        self._refresh_dashboard_link_values()
 
         self._home_page = BrahmaHomePage()
         self._devices_page = BrahmaConnectDevicesPage(self)
@@ -8730,12 +9043,19 @@ class MainWindow(QMainWindow):
         chat_lay.setContentsMargins(0, 4, 0, 0)
         chat_lay.setSpacing(8)
 
-        self._inline_workspace = InlineChatWorkspace()
-        self._inline_workspace.attach_requested.connect(self._browse_attachment)
-        self._inline_workspace.mic_requested.connect(self._toggle_mute)
-        self._inline_workspace.command_submitted.connect(self._send)
-        self._log = self._inline_workspace
-        chat_lay.addWidget(self._inline_workspace, stretch=1)
+        # Dashboard rail chat is a live, display-only mirror of the main chat
+        # workspace (the canonical instance stays on the Chat page). It shows
+        # events as they happen but never writes the store twice.
+        self._rail_chat = InlineChatWorkspace()
+        self._rail_chat._feed_only = True
+        self._rail_chat.attach_requested.connect(self._browse_attachment)
+        self._rail_chat.mic_requested.connect(self._toggle_mute)
+        self._rail_chat.command_submitted.connect(self._send)
+        chat_lay.addWidget(self._rail_chat, stretch=1)
+
+        if not hasattr(self, "_chat_mirrors"):
+            self._chat_mirrors = []
+        self._chat_mirrors.append(self._rail_chat)
 
         self._settings_sidebar = SystemConnectivitySidebar()
         self._empty_right = QWidget()
@@ -11388,6 +11708,11 @@ class BrahmaUI:
             self._win._inline_workspace.record_chat_event(event or {})
         except Exception:
             pass
+        for _mirror in getattr(self._win, "_chat_mirrors", []):
+            try:
+                _mirror.record_chat_event(event or {})
+            except Exception:
+                pass
 
     def _on_discord_config_changed(self, settings: dict):
         settings = settings or {}
@@ -12904,6 +13229,11 @@ class BrahmaUI:
             self._win._inline_workspace.record_chat_event(event or {})
         except Exception:
             pass
+        for _mirror in getattr(self._win, "_chat_mirrors", []):
+            try:
+                _mirror.record_chat_event(event or {})
+            except Exception:
+                pass
 
     def _on_discord_config_changed(self, settings: dict):
         settings = settings or {}
