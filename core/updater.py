@@ -1,76 +1,51 @@
-import os
+"""Updater UI glue for the J.A.R.V.I.S. private build.
+
+Automatic updates are DISABLED by design. The upstream Brahma project used a
+background checker that fetched the upstream repository hash and, on request,
+hard-reset the local git checkout to upstream `origin/main`. For a private
+transformed build that would silently overwrite the local J.A.R.V.I.S.
+identity, branding and configuration — and a hard reset is destructive by
+nature. Both entry points below are therefore inert and network-free.
+
+The class/function names are preserved so existing UI call sites keep working.
+"""
+
+from __future__ import annotations
+
 import sys
-import subprocess
-import threading
-import time
-import requests
-from PyQt6.QtCore import QObject, pyqtSignal
+from pathlib import Path
+
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal
+    _HAS_PYQT = True
+except Exception:  # pragma: no cover - non-UI contexts (tests, headless import)
+    _HAS_PYQT = False
+
+    class QObject:  # type: ignore[no-redef]
+        pass
+
+    def pyqtSignal(*_args, **_kwargs):  # type: ignore[misc,no-redef]
+        def _decorate(_fn):
+            return None
+        return _decorate
+
 
 class UpdateChecker(QObject):
     update_available_sig = pyqtSignal(str)
 
-    def __init__(self, repo_owner="titechprabhasolutions", repo_name="Brahma---personal", branch="main"):
+    def __init__(self, repo_owner: str = "", repo_name: str = "", branch: str = "main"):
         super().__init__()
         self.repo_owner = repo_owner
         self.repo_name = repo_name
         self.branch = branch
-        self._stop_event = threading.Event()
-        self._check_thread = None
 
-    def start(self):
-        if self._check_thread is None:
-            self._check_thread = threading.Thread(target=self._check_loop, daemon=True, name="updater-thread")
-            self._check_thread.start()
+    def start(self) -> None:
+        """No-op: private builds never check upstream for updates."""
 
-    def stop(self):
-        self._stop_event.set()
-        if self._check_thread:
-            self._check_thread.join(timeout=1.0)
+    def stop(self) -> None:
+        """No-op."""
 
-    def _get_local_hash(self):
-        try:
-            output = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
-            return output.decode("utf-8").strip()
-        except Exception:
-            return None
 
-    def _get_remote_hash(self):
-        url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/commits/{self.branch}"
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("sha")
-        except Exception as e:
-            print(f"[Updater] Error fetching remote hash: {e}")
-        return None
-
-    def _check_loop(self):
-        while not self._stop_event.is_set():
-            local_hash = self._get_local_hash()
-            remote_hash = self._get_remote_hash()
-
-            if local_hash and remote_hash and local_hash != remote_hash:
-                print(f"[Updater] Update detected! Local: {local_hash[:7]}, Remote: {remote_hash[:7]}")
-                self.update_available_sig.emit(remote_hash)
-                break # Stop checking once an update is detected
-
-            # Check every hour
-            for _ in range(3600):
-                if self._stop_event.is_set():
-                    break
-                time.sleep(1)
-
-def apply_update_and_restart():
-    print("[Updater] Applying update...")
-    try:
-        # Fetch the latest changes from the origin
-        subprocess.check_call(["git", "fetch", "origin", "main"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # Hard reset to the remote branch to ensure clean state
-        subprocess.check_call(["git", "reset", "--hard", "origin/main"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        print("[Updater] Update applied successfully. Restarting application...")
-        # Restart the app
-        os.execv(sys.executable, ['python'] + sys.argv)
-    except Exception as e:
-        print(f"[Updater] Failed to apply update: {e}")
+def apply_update_and_restart() -> None:
+    """No-op: private builds never apply upstream updates."""
+    print("[Updater] Automatic updates are disabled for this private J.A.R.V.I.S. build.")
