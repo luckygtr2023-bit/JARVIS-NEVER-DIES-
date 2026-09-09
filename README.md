@@ -33,7 +33,7 @@ a single coherent personal assistant:
 - Deterministic handling for system actions, math, memory and reminders
 - One authoritative memory store, one config, one local database
 - Windows computer control with validation and verification
-- Secure device-trust gateway for remote/phone control (Brahma Connect)
+- Secure device-trust gateway for remote/phone control (J.A.R.V.I.S. Connect)
 - Optional smart-home, browser automation, calendar, files and office tools
 
 ## Quick start (Windows)

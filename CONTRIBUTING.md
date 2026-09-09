@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve Brahma AI - Lite.
+Thank you for helping improve J.A.R.V.I.S. (a private build derived from the Brahma AI - Lite project).
 
 ## Before You Start
 

@@ -56,8 +56,8 @@ MAX_UPLOAD_MB = 500
 def _make_uploads_dir() -> Path:
     """Return (and create) the cross-platform uploads folder."""
     for candidate in [
-        Path.home() / "Downloads" / "Brahma Uploads",
-        Path.home() / "Documents" / "Brahma Uploads",
+        Path.home() / "Downloads" / "JARVIS Uploads",
+        Path.home() / "Documents" / "JARVIS Uploads",
         BASE_DIR / "uploads",
     ]:
         try:
@@ -133,8 +133,8 @@ def _ensure_network_access(port: int) -> None:
     if sys.platform == "win32":
         import ctypes, time
 
-        port_rule = f"Brahma Dashboard Port {port}"
-        prog_rule  = "Brahma Dashboard Python"
+        port_rule = f"JARVIS Dashboard Port {port}"
+        prog_rule  = "JARVIS Dashboard Python"
         py_exe     = sys.executable
 
         def _netsh_rule_exists(name: str) -> bool:
@@ -190,7 +190,7 @@ def _ensure_network_access(port: int) -> None:
             )
 
         bat_body = "\r\n".join(bat_lines) + "\r\n"
-        fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="brahma_fw_")
+        fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="jarvis_fw_")
         try:
             os.write(fd, bat_body.encode("mbcs"))   # Windows cmd.exe expects ANSI
             os.close(fd)
@@ -445,8 +445,8 @@ def _read(name: str) -> str:
 def _ensure_ssl_certs() -> bool:
     """Create local self-signed certs when missing so phones can use HTTPS."""
     certs = BASE_DIR / "config" / "certs"
-    key_path = certs / "brahma.key"
-    cert_path = certs / "brahma.crt"
+    key_path = certs / "jarvis.key"
+    cert_path = certs / "jarvis.crt"
     if key_path.exists() and cert_path.exists():
         return True
     try:
@@ -460,7 +460,7 @@ def _ensure_ssl_certs() -> bool:
         certs.mkdir(parents=True, exist_ok=True)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.COMMON_NAME, "Brahma AI Local Remote"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "J.A.R.V.I.S. Local Remote"),
         ])
         alt_names = [
             x509.DNSName("localhost"),
@@ -634,7 +634,7 @@ class DashboardServer:
   h2{color:#f87171;margin-bottom:12px}p{color:#5e6a7e;font-size:14px}
 </style></head>
 <body><div><h2>Link Expired</h2>
-<p>Press <strong style="color:#dde3ed">Mobile Connect</strong> in Brahma to get a new QR code.</p>
+<p>Press <strong style="color:#dde3ed">Mobile Connect</strong> in J.A.R.V.I.S. to get a new QR code.</p>
 </div></body></html>""")
 
             del self._pending_keys[key]
@@ -665,7 +665,7 @@ class DashboardServer:
   localStorage.setItem('brahma_device_token','{dev_tok}');
   setTimeout(function(){{location.replace('/')}},400);
 </script>
-<p>Connecting to Brahma…</p>
+<p>Connecting to J.A.R.V.I.S.…</p>
 </body></html>""")
 
         @app.post("/api/device-login")
@@ -884,8 +884,8 @@ class DashboardServer:
     # ── serve ─────────────────────────────────────────────────────────────
     async def _serve_alias(self) -> None:
         """Legacy HTTPS alias server kept for compatibility, but not used for QR pairing."""
-        ssl_key  = BASE_DIR / "config" / "certs" / "brahma.key"
-        ssl_cert = BASE_DIR / "config" / "certs" / "brahma.crt"
+        ssl_key  = BASE_DIR / "config" / "certs" / "jarvis.key"
+        ssl_cert = BASE_DIR / "config" / "certs" / "jarvis.crt"
         asyncio.get_event_loop().run_in_executor(None, _ensure_network_access, PORT + 1)
         cfg = uvicorn.Config(
             self.app, host="0.0.0.0", port=PORT + 1, log_level="warning",
@@ -910,5 +910,5 @@ class DashboardServer:
         )
 
         print(f"[Dashboard] http://{self._ip}:{PORT}")
-        print("[Dashboard] Press 'Mobile Connect' in Brahma UI to get the QR code.")
+        print("[Dashboard] Press 'Mobile Connect' in J.A.R.V.I.S. UI to get the QR code.")
         await uvicorn.Server(cfg).serve()

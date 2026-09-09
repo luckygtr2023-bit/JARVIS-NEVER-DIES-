@@ -142,7 +142,7 @@ def _ensure_desktop_shortcut() -> None:
         desktop_dir.mkdir(parents=True, exist_ok=True)
         shortcut_path = desktop_dir / "J.A.R.V.I.S.lnk"
         script_path = BASE_DIR / "main.py"
-        icon_path = BASE_DIR / "assets" / "Brahma_Lite_Logo.ico"
+        icon_path = BASE_DIR / "assets" / "jarvis_logo.ico"
 
         if not icon_path.exists():
             icon_path = None
@@ -825,7 +825,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "connect_list_devices",
         "description": (
-            "Lists devices connected to Brahma Connect. Use when the user asks what devices are connected, "
+            "Lists devices connected to J.A.R.V.I.S. Connect. Use when the user asks what devices are connected, "
             "what is online, or wants a simple inventory of paired devices."
         ),
         "parameters": {
@@ -873,7 +873,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "connect_execute",
         "description": (
-            "Routes a Brahma Connect command to a paired device through the gateway. "
+            "Routes a J.A.R.V.I.S. Connect command to a paired device through the gateway. "
             "Use for actions such as launch_app, open_url, get_battery, capture_screen, take_photo, "
             "clipboard_get, clipboard_set, send_file, receive_file, media_play, media_pause, volume_set, "
             "notification_list, get_device_info, close_app, mouse_move, keyboard_type, unlock_phone, file_list, file_read, file_write, file_delete."
@@ -907,7 +907,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "connect_pair_device",
         "description": (
-            "Creates or approves Brahma Connect pairing. Use to generate a QR code / pairing code for a new device, "
+            "Creates or approves J.A.R.V.I.S. Connect pairing. Use to generate a QR code / pairing code for a new device, "
             "or to approve a pending pairing request."
         ),
         "parameters": {
@@ -923,7 +923,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "connect_disconnect_device",
         "description": (
-            "Disconnects a device from Brahma Connect and marks it offline. "
+            "Disconnects a device from J.A.R.V.I.S. Connect and marks it offline. "
             "Use when the user asks to disconnect, log out, or stop a paired device."
         ),
         "parameters": {
@@ -2049,13 +2049,13 @@ class BrahmaLive:
             result = json.loads(result_json)
             if result.get("success", False):
                 detail = str(result.get("detail") or result.get("error") or "Device command completed.")
-                title = f"Brahma Connect: {action}"
+                title = f"J.A.R.V.I.S. Connect: {action}"
                 self.ui.update_task_workspace(
                     title=title,
                     command=text,
                     plan=[
                         "Identify the paired phone or device",
-                        "Route the command through Brahma Connect",
+                        "Route the command through J.A.R.V.I.S. Connect",
                         "Verify the device response",
                         "Report the result",
                     ],
@@ -2070,7 +2070,7 @@ class BrahmaLive:
                     self.ui.set_state("LISTENING")
                 return True
 
-            self.ui.write_log(f"ERR: Brahma Connect command failed: {result.get('error') or 'Unknown error'}")
+            self.ui.write_log(f"ERR: J.A.R.V.I.S. Connect command failed: {result.get('error') or 'Unknown error'}")
             return False
         except Exception:
             return False
@@ -3363,7 +3363,7 @@ def main():
     except Exception as exc:
         _startup_log(f"GitHub update skipped: {exc}")
     _ensure_desktop_shortcut()
-    ui = BrahmaUI(str(BASE_DIR / "assets" / "Brahma_Lite_Logo.png"), show_immediately=True)
+    ui = BrahmaUI(str(BASE_DIR / "assets" / "jarvis_logo.png"), show_immediately=True)
     dashboard = None
     dashboard_enabled = DashboardServer is not None and not _is_port_in_use(8000)
     if DashboardServer is not None and not dashboard_enabled:
@@ -3399,7 +3399,7 @@ def main():
         except Exception as exc:
             _startup_log(f"brahma connect init failed: {exc}")
             try:
-                ui.write_log(f"ERR: Brahma Connect failed to initialize: {exc}")
+                ui.write_log(f"ERR: J.A.R.V.I.S. Connect failed to initialize: {exc}")
             except Exception:
                 pass
             brahma_connect = None
@@ -3413,7 +3413,7 @@ def main():
         if _is_port_in_use(connect_port):
             _startup_log(f"brahma connect disabled: port {connect_port} already in use")
             try:
-                ui.write_log(f"SYS: Brahma Connect is already running on port {connect_port}.")
+                ui.write_log(f"SYS: J.A.R.V.I.S. Connect is already running on port {connect_port}.")
             except Exception:
                 pass
         else:
@@ -3425,7 +3425,7 @@ def main():
                 except Exception as exc:
                     _startup_log(f"brahma connect thread error: {exc}")
                     try:
-                        ui.write_log(f"ERR: Brahma Connect server failed: {exc}")
+                        ui.write_log(f"ERR: J.A.R.V.I.S. Connect server failed: {exc}")
                     except Exception:
                         pass
 

@@ -1,6 +1,6 @@
 # gesture_utils.py
 """
-Hand gesture recognition and classification utility for Brahma AI.
+Hand gesture recognition and classification utility for J.A.R.V.I.S.
 
 Recognizes:
 - Open Palm (✋) -> Play / Pause

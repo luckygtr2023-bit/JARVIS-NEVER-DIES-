@@ -1,6 +1,6 @@
 # actions/clipboard_processor.py
 """
-Clipboard Processor Action for Brahma AI.
+Clipboard Processor Action for J.A.R.V.I.S.
 
 Allows the AI to instantly read whatever text the user has copied to their Windows clipboard.
 """

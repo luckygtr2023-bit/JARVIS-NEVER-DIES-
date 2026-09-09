@@ -207,7 +207,7 @@ fun BrahmaConnectApp(
                         onDismiss = { showManual = false },
                         onConnect = {
                             val p = manualPort.toIntOrNull() ?: 8765
-                            AgentStateStore.setGateway(GatewayEndpoint(name = "Brahma PC", host = manualHost.trim(), port = p))
+                            AgentStateStore.setGateway(GatewayEndpoint(name = "JARVIS PC", host = manualHost.trim(), port = p))
                             AgentStateStore.setStatus("Manual endpoint selected")
                             onStartService()
                             showManual = false
@@ -243,13 +243,13 @@ fun BrahmaConnectApp(
                     onScanned = { raw ->
                         val offer = PairingPayloadParser.parse(raw)
                         if (offer == null) {
-                            scanError = "That QR code does not look like a Brahma pairing code."
+                            scanError = "That QR code does not look like a J.A.R.V.I.S. pairing code."
                             AgentStateStore.setError(scanError)
                         } else {
                             scanError = null
                             storage.saveGatewayHint(offer)
                             AgentStateStore.setPairingOffer(offer)
-                            AgentStateStore.setGateway(GatewayEndpoint(name = "Brahma PC", host = offer.host, port = offer.port))
+                            AgentStateStore.setGateway(GatewayEndpoint(name = "JARVIS PC", host = offer.host, port = offer.port))
                             AgentStateStore.setStatus("Pairing payload loaded")
                             navController.popBackStack()
                         }
@@ -342,7 +342,7 @@ fun AboutScreen(onNext: () -> Unit) {
         GlassCard {
             Text("Hardware Bridge", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Spacer(modifier = Modifier.height(16.dp))
-            Text("This agent acts as a secure physical bridge between your Android device and your PC's Brahma AI.", color = androidx.compose.ui.graphics.Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text("This agent acts as a secure physical bridge between your Android device and your PC's J.A.R.V.I.S.", color = androidx.compose.ui.graphics.Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             Spacer(modifier = Modifier.height(24.dp))
             Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
                 Text("Next")
@@ -450,7 +450,7 @@ private fun DiscoveryScreen(
     ) {
         Text("BRAHMA CONNECT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = androidx.compose.ui.graphics.Color.White)
         Spacer(Modifier.height(8.dp))
-        Text("Connect this device to Brahma AI.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Connect this device to J.A.R.V.I.S.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
         Card(colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f), contentColor = androidx.compose.ui.graphics.Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))) {
             Column(Modifier.padding(20.dp)) {
@@ -470,7 +470,7 @@ private fun DiscoveryScreen(
             Button(onClick = onConnect, modifier = Modifier.fillMaxWidth()) { Text("Connect") }
             Spacer(Modifier.height(12.dp))
         }
-        Button(onClick = onFindBrahma, modifier = Modifier.fillMaxWidth()) { Text("Find Brahma") }
+        Button(onClick = onFindBrahma, modifier = Modifier.fillMaxWidth()) { Text("Find J.A.R.V.I.S.") }
         Spacer(Modifier.height(12.dp))
         FilledTonalButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) { Text("Scan QR") }
         Spacer(Modifier.height(12.dp))
@@ -491,7 +491,7 @@ private fun PairingPendingScreen(
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("CONNECT TO BRAHMA?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(8.dp))
-        Text("${gateway?.name ?: "Brahma PC"}\n${gateway?.host ?: offer.host}:${offer.port}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("${gateway?.name ?: "JARVIS PC"}\n${gateway?.host ?: offer.host}:${offer.port}", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(20.dp))
         Card(colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f), contentColor = androidx.compose.ui.graphics.Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))) {
             Column(Modifier.padding(16.dp)) {
@@ -529,7 +529,7 @@ private fun ConnectedScreen(
         Spacer(Modifier.height(20.dp))
         Card(colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f), contentColor = androidx.compose.ui.graphics.Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))) {
             Column(Modifier.padding(16.dp)) {
-                Text(gateway?.name ?: "Brahma PC", fontWeight = FontWeight.Bold)
+                Text(gateway?.name ?: "JARVIS PC", fontWeight = FontWeight.Bold)
                 Text(credential.deviceName)
                 Text("Battery status is reported by the agent.")
                 Text("Network: Wi-Fi")
@@ -554,7 +554,7 @@ private fun ConnectedScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("Brahma Chat", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text("J.A.R.V.I.S. Chat", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text("Synchronized with your PC", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
                 }

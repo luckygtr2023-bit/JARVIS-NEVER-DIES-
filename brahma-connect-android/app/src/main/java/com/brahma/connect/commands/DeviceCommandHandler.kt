@@ -203,7 +203,7 @@ class DeviceCommandHandler(private val context: Context) {
         }
         val service = com.brahma.connect.accessibility.BrahmaAccessibilityService.instance
         if (service == null) {
-            return CommandResult(false, errorCode = "ACCESSIBILITY_DISABLED", error = "Brahma Accessibility Service is not enabled.")
+            return CommandResult(false, errorCode = "ACCESSIBILITY_DISABLED", error = "J.A.R.V.I.S. Accessibility Service is not enabled.")
         }
         val success = service.unlockPhone(pin)
         return if (success) {

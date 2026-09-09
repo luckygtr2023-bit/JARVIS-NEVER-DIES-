@@ -59,7 +59,7 @@ fun ChatScreen(
             CenterAlignedTopAppBar(
                 title = { 
                     Text(
-                        "Brahma Agent", 
+                        "J.A.R.V.I.S.", 
                         color = Color.White, 
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleLarge
@@ -106,7 +106,7 @@ fun ChatScreen(
                         .weight(1f)
                         .clip(RoundedCornerShape(24.dp))
                         .background(Color(0xFF1A1A1A)),
-                    placeholder = { Text("Message Brahma...", color = Color.Gray) },
+                    placeholder = { Text("Message J.A.R.V.I.S....", color = Color.Gray) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = Color.Transparent,

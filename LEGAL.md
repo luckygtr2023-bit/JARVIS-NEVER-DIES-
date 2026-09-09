@@ -50,9 +50,10 @@ The following legally required notices are preserved and are **not** modified:
   `brahma_connect/`, `actions/brahma_connect.py`, `com.brahma.connect`,
   `_BRAHMA._tcp.local.`, internal config keys, database identifiers, internal imports and
   protocol strings. These are implementation identifiers, not product branding.
-- "Brahma Connect" is kept as the name of the upstream device-gateway subsystem/feature and of
-  its Android companion app; it is used to refer to the upstream component, factually, in
-  documentation and UI labels about that component.
+- The upstream device gateway subsystem keeps its internal identifiers
+  (`brahma_connect`, `com.brahma.connect`, `_BRAHMA._tcp.local.`). Product-facing UI labels
+  for the gateway feature use "J.A.R.V.I.S. Connect"; the upstream "Brahma Connect" name
+  appears only in historical/technical documentation and in `docs/original/`.
 
 ## Third-party components
 

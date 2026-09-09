@@ -62,6 +62,7 @@ def test_product_files_use_jarvis_branding():
     for rel in PRODUCT_FILES:
         text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
         # The intentional attribution line is exempt (legal requirement).
+        text = text.replace("Original project: Brahma Echo by Suryaansh Tiwari", "")
         text = text.replace("Original: Brahma Echo by Suryaansh Tiwari", "")
         for forbidden in FORBIDDEN_PRODUCT_STRINGS:
             assert forbidden not in text, f"{rel} still contains {forbidden!r}"

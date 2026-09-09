@@ -1,6 +1,6 @@
 # actions/calendar_scheduler.py
 """
-Calendar and Schedule Management for J.A.R.V.I.S..
+Calendar and Schedule Management for J.A.R.V.I.S.
 
 Allows creating, listing, checking, and managing calendar appointments,
 meetings, and events with local persistent storage and .ics calendar exports.

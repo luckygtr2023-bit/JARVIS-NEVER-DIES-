@@ -1,5 +1,5 @@
 # actions/open_app.py
-# Brahma AI - Cross-Platform App Launcher
+# J.A.R.V.I.S. - Cross-Platform App Launcher
 
 import os
 import time

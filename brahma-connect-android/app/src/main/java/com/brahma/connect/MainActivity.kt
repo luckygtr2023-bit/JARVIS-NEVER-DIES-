@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
             AgentStateStore.setPairingOffer(it)
             AgentStateStore.setGateway(
                 com.brahma.connect.core.GatewayEndpoint(
-                    name = "Brahma PC",
+                    name = "JARVIS PC",
                     host = it.host,
                     port = it.port,
                 )

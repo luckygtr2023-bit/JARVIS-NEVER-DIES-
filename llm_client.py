@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from or_client import client as openrouter_client
+from omniroute import OmniRouteClient, OmniRouteUnavailable
 
 logger = logging.getLogger("llm_client")
 
@@ -17,7 +18,9 @@ def _get_base_dir() -> Path:
 BASE_DIR = _get_base_dir()
 SETTINGS_PATH = BASE_DIR / "config" / "app_settings.json"
 
-# Canonical provider identifiers used across the app ("Gemini", "OpenRouter", "Local").
+# Canonical provider identifiers used across the app.
+# Gemini and OpenRouter are cloud OpenAI-compatible routes; Local is Ollama /
+# LM Studio; OmniRoute is the optional routing gateway in between.
 DEFAULT_PROVIDER = "OpenRouter"
 PROVIDER_ALIASES = {
     "gemini": "Gemini",
@@ -27,6 +30,7 @@ PROVIDER_ALIASES = {
     "ollama": "Local",
     "ollama (local)": "Local",
     "lm studio": "Local",
+    "omniroute": "OmniRoute",
 }
 LOCAL_CONNECT_TIMEOUT = 10.0   # seconds to establish a connection to the local AI server
 LOCAL_READ_TIMEOUT    = 120.0  # seconds to wait for the full local completion
@@ -39,17 +43,17 @@ def normalize_provider(raw: object) -> str:
 
 
 class UnifiedAIClient:
-    """Single AI-provider facade.
+    """Single AI-provider facade with an explicit routing chain.
 
-    Providers:
-      - "Local" -> Ollama / LM Studio OpenAI-compatible endpoint
-                   (offline-first local provider)
-      - "OpenRouter" / "Gemini" -> remote OpenAI-compatible routing
+    Request route (J.A.R.V.I.S. router):
 
-    When ``auto_provider_switch`` is enabled in app settings and the active
-    provider fails, the client tries the alternate class of provider and then
-    raises a precise, honest error if both are unavailable. It never fakes a
-    successful answer.
+        LOCAL OLLAMA  ->  OMNIROUTE (optional gateway)  ->  OPENROUTER/GEMINI
+
+    The *default* provider is tried first. When ``auto_provider_switch`` is
+    enabled, the rest of the chain is tried in the order above and the first
+    successful provider wins. When every provider fails (or auto-switch is
+    disabled) a precise, honest error is raised — the client NEVER fabricates
+    a successful response.
     """
 
     def __init__(self):
@@ -57,6 +61,7 @@ class UnifiedAIClient:
         self._local_url = "http://localhost:11434/v1"
         self._local_model = "llama3.2"
         self._auto_switch = True
+        self._omni = OmniRouteClient()
         self.reload_settings()
 
     def reload_settings(self):
@@ -69,6 +74,7 @@ class UnifiedAIClient:
             self._auto_switch = bool(data.get("auto_provider_switch", True))
         except Exception as e:
             logger.error(f"[LLM Client] Failed to load settings: {e}")
+        self._omni.reload()
 
     # --- helpers -----------------------------------------------------------
 
@@ -82,7 +88,7 @@ class UnifiedAIClient:
         payload = {
             "model": self._local_model,
             "messages": messages,
-            "temperature": temperature
+            "temperature": temperature,
         }
         if response_format:
             payload["response_format"] = response_format
@@ -122,22 +128,51 @@ class UnifiedAIClient:
         except json.JSONDecodeError as e:
             raise ValueError(f"Local model returned unparseable JSON: {e}\nRaw output: {raw[:200]}")
 
-    def _try_alternate_or_raise(self, primary_label: str, primary_err: Exception,
-                                alternate_fn: Callable[[], object], alternate_label: str) -> object:
-        """Run the alternate provider once (if auto-switch enabled), else raise honestly."""
-        if not self._auto_switch:
-            raise RuntimeError(f"{primary_label} failed: {primary_err}") from primary_err
-        try:
-            result = alternate_fn()
-            if result:
-                return result
-            raise RuntimeError(f"{alternate_label} returned an empty response")
-        except Exception as alt_err:
-            raise RuntimeError(
-                f"AI UNAVAILABLE — {primary_label} failed ({primary_err}); "
-                f"fallback {alternate_label} failed ({alt_err}). "
-                f"Check config/api_keys.json and that the local AI server is running."
-            ) from alt_err
+    def _local_attempt(self, messages: list[dict], temperature: float, response_format: Optional[dict] = None) -> str:
+        result = self._local_chat_completion(messages, temperature, response_format)
+        if result:
+            return result
+        raise RuntimeError(
+            f"{self._ollama_label()} — check that Ollama/LM Studio is running at {self._local_url}"
+        )
+
+    def _chain_order(self) -> list[str]:
+        primary = self._provider
+        if primary == "Local":
+            return ["local", "omni", "remote"]
+        if primary == "OmniRoute":
+            return ["omni", "local", "remote"]
+        return ["remote", "local", "omni"]
+
+    def _run_chain(self, attempts: list[tuple[str, Callable[[], str]]]) -> str:
+        """Try providers in order; auto-switch governs fallback; honest errors."""
+        errors: list[str] = []
+        tried = 0
+        for index, (label, fn) in enumerate(attempts):
+            if index > 0 and not self._auto_switch:
+                break
+            tried += 1
+            try:
+                result = fn()
+                if result:
+                    return result
+                errors.append(f"{label} returned an empty response")
+            except Exception as exc:
+                errors.append(f"{label} failed ({exc})")
+        if tried == 1 and not self._auto_switch:
+            # Keep the original precise error for the primary provider.
+            raise RuntimeError(errors[0]) if errors else RuntimeError("AI provider failed.")
+        detail = "; ".join(errors) if errors else "No AI provider responded."
+        raise RuntimeError(
+            f"AI UNAVAILABLE — {detail}. "
+            "Check config/api_keys.json and that Ollama/OmniRoute are running."
+        )
+
+    def _remote_chat(self, prompt: str, system: str, history, model, max_tokens, temperature) -> str:
+        result = openrouter_client.chat(prompt, system, history, model, max_tokens, temperature)
+        if result:
+            return result
+        raise RuntimeError("OpenRouter provider returned an empty response")
 
     # --- public API --------------------------------------------------------
 
@@ -148,74 +183,112 @@ class UnifiedAIClient:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
-        if self._is_local_provider():
-            result = self._local_chat_completion(messages, temperature)
-            if result:
-                return result
-            err = RuntimeError(
-                f"{self._ollama_label()} — check that Ollama/LM Studio is running at {self._local_url}"
-            )
-            alt = self._try_alternate_or_raise(
-                self._ollama_label(), err,
-                lambda: openrouter_client.chat(prompt, system, history, model, max_tokens, temperature),
-                "OpenRouter",
-            )
-            return alt  # type: ignore[return-value]
-        else:
+        def _local() -> str:
+            return self._local_attempt(messages, temperature)
+
+        def _omni() -> str:
             try:
-                return openrouter_client.chat(prompt, system, history, model, max_tokens, temperature)
-            except Exception as e:
-                alt = self._try_alternate_or_raise(
-                    f"{self._provider} provider", e,
-                    lambda: self._local_chat_completion(messages, temperature),
-                    self._ollama_label(),
+                return self._omni.chat(prompt, system=system, history=history,
+                                       model=model, max_tokens=max_tokens, temperature=temperature)
+            except OmniRouteUnavailable as exc:
+                raise RuntimeError(str(exc)) from exc
+
+        def _remote() -> str:
+            return self._remote_chat(prompt, system, history, model, max_tokens, temperature)
+
+        by_name = {"local": ("OLLAMA/UNAVAILABLE", _local), "omni": ("OMNIROUTE", _omni), "remote": ("OpenRouter", _remote)}
+        attempts: list[tuple[str, Callable[[], str]]] = []
+
+        if self._provider == "OmniRoute" and not self._omni.is_configured():
+            if not self._auto_switch:
+                raise RuntimeError(
+                    "OMNIROUTE UNAVAILABLE — OmniRoute is disabled or has no endpoint configured."
                 )
-                if alt:
-                    return alt  # type: ignore[return-value]
-                raise RuntimeError(f"{self._provider} provider failed: {e}") from e
+            # OmniRoute unavailable -> fall back through local/remote
+            order = ["local", "remote"]
+        else:
+            order = self._chain_order()
+
+        for key in order:
+            label, fn = by_name[key]
+            if key == "omni" and not self._omni.is_configured():
+                continue
+            if key == "local":
+                label = self._ollama_label()
+            attempts.append((label, fn))
+
+        return self._run_chain(attempts)
 
     def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096) -> dict:
         self.reload_settings()
         messages = [
             {"role": "system", "content": system + " Output valid JSON only, without any markdown formatting."},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": prompt},
         ]
 
-        def _local_raw() -> Optional[str]:
-            return self._local_chat_completion(messages, temperature=0.2, response_format={"type": "json_object"})
+        def _local() -> dict:
+            raw = self._local_attempt(messages, temperature=0.2, response_format={"type": "json_object"})
+            return self._clean_json(raw)
 
-        def _local_json() -> Optional[dict]:
-            raw = _local_raw()
-            return self._clean_json(raw) if raw else None
-
-        if self._is_local_provider():
-            raw = _local_raw()
-            if raw:
-                return self._clean_json(raw)
-            err = RuntimeError(
-                f"{self._ollama_label()} — check that Ollama/LM Studio is running at {self._local_url}"
-            )
-            alt = self._try_alternate_or_raise(
-                self._ollama_label(), err,
-                lambda: openrouter_client.chat_json(prompt, system, model, max_tokens),
-                "OpenRouter",
-            )
-            return alt  # type: ignore[return-value]
-        else:
+        def _omni() -> dict:
             try:
-                return openrouter_client.chat_json(prompt, system, model, max_tokens)
-            except Exception as e:
-                alt = self._try_alternate_or_raise(
-                    f"{self._provider} provider", e,
-                    lambda: _local_json(),
-                    self._ollama_label(),
-                )
-                if alt:
-                    return alt  # type: ignore[return-value]
-                raise RuntimeError(f"{self._provider} provider failed: {e}") from e
+                return self._omni.chat_json(prompt, system=system, model=model, max_tokens=max_tokens)
+            except OmniRouteUnavailable as exc:
+                raise RuntimeError(str(exc)) from exc
+
+        def _remote() -> dict:
+            result = openrouter_client.chat_json(prompt, system, model, max_tokens)
+            if result:
+                return result
+            raise RuntimeError("OpenRouter provider returned an empty response")
+
+        attempts: list[tuple[str, Callable[[], dict]]] = []
+        if self._provider == "OmniRoute" and not self._omni.is_configured():
+            order = ["local", "remote"] if self._auto_switch else []
+        else:
+            order = self._chain_order()
+        for key in order:
+            if key == "omni":
+                if not self._omni.is_configured():
+                    continue
+                attempts.append(("OMNIROUTE", _omni))
+            elif key == "local":
+                attempts.append((self._ollama_label(), _local))
+            else:
+                attempts.append(("OpenRouter", _remote))
+        # dict-returning variant of _run_chain
+        errors: list[str] = []
+        tried = 0
+        for index, (label, fn) in enumerate(attempts):
+            if index > 0 and not self._auto_switch:
+                break
+            tried += 1
+            try:
+                result = fn()
+                if result:
+                    return result
+                errors.append(f"{label} returned an empty response")
+            except Exception as exc:
+                errors.append(f"{label} failed ({exc})")
+        if tried == 1 and not self._auto_switch:
+            raise RuntimeError(errors[0]) if errors else RuntimeError("AI provider failed.")
+        detail = "; ".join(errors) if errors else "No AI provider responded."
+        raise RuntimeError(
+            f"AI UNAVAILABLE — {detail}. "
+            "Check config/api_keys.json and that Ollama/OmniRoute are running."
+        )
 
     def vision(self, prompt: str, image_b64: str, mime: str = "image/png", system: str = "Analyze the image.", model: Optional[str] = None, max_tokens: int = 1024) -> str:
         self.reload_settings()
+        if self._provider == "OmniRoute":
+            if not self._omni.is_configured():
+                raise RuntimeError(
+                    "OMNIROUTE UNAVAILABLE — OmniRoute is disabled or has no endpoint configured."
+                )
+            try:
+                return self._omni.vision(prompt, image_b64, mime, system, model, max_tokens)
+            except OmniRouteUnavailable as exc:
+                raise RuntimeError(str(exc)) from exc
         if self._is_local_provider():
             messages = [
                 {"role": "system", "content": system},
@@ -223,9 +296,9 @@ class UnifiedAIClient:
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
-                        {"type": "text", "text": prompt}
-                    ]
-                }
+                        {"type": "text", "text": prompt},
+                    ],
+                },
             ]
             result = self._local_chat_completion(messages, temperature=0.2)
             if result:
@@ -257,8 +330,23 @@ class UnifiedAIClient:
             if result:
                 return result
             raise RuntimeError(f"{self._ollama_label()} — check that Ollama/LM Studio is running at {self._local_url}")
+        elif self._provider == "OmniRoute":
+            try:
+                return self._omni.multi_turn(messages, model=model, max_tokens=max_tokens, temperature=temperature)
+            except OmniRouteUnavailable as exc:
+                raise RuntimeError(str(exc)) from exc
         else:
             return openrouter_client.multi_turn(messages, model, max_tokens, temperature)
+
+    def route_status(self) -> dict:
+        """Routing diagnostics (for About/System UI, logs and tests)."""
+        self.reload_settings()
+        return {
+            "default_provider": self._provider,
+            "local": {"url": self._local_url, "model": self._local_model},
+            "omniroute": self._omni.status(),
+            "auto_switch": self._auto_switch,
+        }
 
 
 client = UnifiedAIClient()

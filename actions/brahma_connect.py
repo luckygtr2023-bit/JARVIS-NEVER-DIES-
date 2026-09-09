@@ -240,7 +240,7 @@ def connect_disconnect_device(parameters: dict[str, Any] | None = None, player=N
     target = _normalize_target(params)
     if not target:
         return _fail("A device name or id is required.", "MISSING_PARAMETERS", action="connect_disconnect_device")
-    reason = str(params.get("reason") or "Disconnected by Brahma").strip()
+    reason = str(params.get("reason") or "Disconnected by owner").strip()
     try:
         service = _service()
         result = asyncio.run(service.disconnect_device(target, reason=reason))

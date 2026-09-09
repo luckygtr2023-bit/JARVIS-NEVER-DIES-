@@ -87,8 +87,8 @@ class BrahmaConnectForegroundService : Service() {
     private fun updateNotification() {
         val state = AgentStateStore.connectionState.value
         val text = when (state) {
-            ConnectionState.CONNECTED -> "Connected to Brahma"
-            ConnectionState.CONNECTING -> "Connecting to Brahma"
+            ConnectionState.CONNECTED -> "Connected to J.A.R.V.I.S."
+            ConnectionState.CONNECTING -> "Connecting to J.A.R.V.I.S."
             ConnectionState.RECONNECTING -> "Reconnecting"
             ConnectionState.DISCONNECTED -> "Disconnected"
         }

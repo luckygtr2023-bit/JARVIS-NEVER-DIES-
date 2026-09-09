@@ -58,8 +58,8 @@ CONFIG_DIR = BASE_DIR / "config"
 API_FILE   = CONFIG_DIR / "api_keys.json"
 APP_SETTINGS_FILE = CONFIG_DIR / "app_settings.json"
 DISCORD_SETTINGS_FILE = CONFIG_DIR / "discord_bot.json"
-LOGO_FILE  = BASE_DIR / "assets" / "Brahma_Lite_Logo.png"
-LOGO_ICO   = BASE_DIR / "assets" / "Brahma_Lite_Logo.ico"
+LOGO_FILE  = BASE_DIR / "assets" / "jarvis_logo.png"
+LOGO_ICO   = BASE_DIR / "assets" / "jarvis_logo.ico"
 BACKGROUND_IMAGE_FILE = BASE_DIR / "assets" / "background.png"
 MODEL_DOWNLOAD_URL = "https://storage.googleapis.com/mediapipe-assets/hand_landmarker.task"
 
@@ -650,6 +650,10 @@ def _default_app_settings() -> dict:
         "attention_call_prompts": True,
         "developer_mode_enabled": False,
         "developer_mode_workspace": "",
+        # OmniRoute — optional OpenAI-compatible routing layer (see omniroute.py)
+        "omniroute_enabled": False,
+        "omniroute_url": "http://127.0.0.1:39000/v1",
+        "omniroute_model": "",
     }
 
 
@@ -1627,12 +1631,20 @@ class HudCanvas(QWidget):
             return QColor(255, 179, 0, 255)
         if self.speaking:
             return QColor(255, 179, 0, 255)
+        if self.state == "ERROR":
+            return QColor(255, 64, 64, 255)
+        if self.state in ("OFFLINE", "DISCONNECTED"):
+            return QColor(110, 118, 130, 255)
         if self.state == "LISTENING":
             return QColor(69, 127, 255, 255)
         if self.state == "THINKING":
             return QColor(255, 185, 96, 255)
         if self.state in ("EXECUTING", "PROCESSING"):
             return QColor(255, 179, 0, 255)
+        if self.state in ("READY", "IDLE"):
+            return QColor(120, 220, 170, 255)
+        if self.state == "INITIALISING":
+            return QColor(255, 179, 0, 200)
         return QColor(255, 179, 0, 255)
 
     def paintEvent(self, _):
@@ -1735,26 +1747,87 @@ class HudCanvas(QWidget):
             p.drawLine(QPointF(bx, by), QPointF(bx + dx * bl, by))
             p.drawLine(QPointF(bx, by), QPointF(bx, by + dy * bl))
 
-        # face text only: remove the center orb circle overlay
-        title_font = QFont("Segoe UI", int(max(20, fw * 0.052)), QFont.Weight.Bold)
-        p.setFont(title_font)
-        y_title = cy - 25
-        p.setPen(QColor(245, 248, 255, 235))
-        p.drawText(QRectF(cx - 120, y_title, 130, 48), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "Brah")
-        p.setPen(QColor(255, 98, 98, 245))
-        p.drawText(QRectF(cx + 8, y_title, 90, 48), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "ma")
-        p.setFont(QFont("Segoe UI", int(max(8, fw * 0.018)), QFont.Weight.Bold))
-        p.setPen(QColor(190, 196, 205, 190))
-        p.drawText(QRectF(cx - 90, cy + 18, 180, 22), Qt.AlignmentFlag.AlignCenter, "AI ASSISTANT")
+        # ── J.A.R.V.I.S. ARC-REACTOR CORE ────────────────────────────────────
+        # Central glowing reactor rendered live each frame (no static image).
+        core_r  = fw * 0.245
+        pulse   = 0.5 + 0.5 * math.sin(self._tick * (0.10 if self.speaking else 0.055))
+        boost   = 1.25 if self.state == "ERROR" else 1.0
+        ar, ag, ab = accent.red(), accent.green(), accent.blue()
 
-        # keep the center clean: no extra particles
+        # Wide ambient glow breathing with activity
+        glow_a = min(215, int(self._halo * (0.75 + 0.35 * pulse) * boost))
+        glow = QRadialGradient(cx, cy, core_r * 1.55)
+        glow.setColorAt(0.0,  QColor(ar, ag, ab, glow_a))
+        glow.setColorAt(0.55, QColor(ar, ag, ab, max(12, glow_a // 4)))
+        glow.setColorAt(1.0,  QColor(ar, ag, ab, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(glow))
+        p.drawEllipse(QPointF(cx, cy), core_r * 1.55, core_r * 1.55)
 
-        # status text
+        # Dark reactor dish
+        dish = QRadialGradient(cx - core_r * 0.3, cy - core_r * 0.35, core_r * 1.7)
+        dish.setColorAt(0.0,  QColor(22, 30, 42, 235))
+        dish.setColorAt(0.7,  QColor(6, 9, 13, 250))
+        dish.setColorAt(1.0,  QColor(2, 3, 5, 255))
+        p.setBrush(QBrush(dish))
+        p.setPen(QPen(QColor(ar, ag, ab, 130), max(1.2, fw * 0.006)))
+        p.drawEllipse(QPointF(cx, cy), core_r, core_r)
+
+        # Inner technical rim + rotating segmented turbine arcs
+        p.setPen(QPen(QColor(210, 220, 235, 70), 1.0))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), core_r * 0.97, core_r * 0.97)
+        seg_r   = core_r * 0.845
+        seg_rect = QRectF(cx - seg_r, cy - seg_r, seg_r * 2, seg_r * 2)
+        arc_w   = max(2.0, fw * 0.012)
+        arc_pen = QPen(QColor(ar, ag, ab, 220), arc_w)
+        arc_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        spin = self._rings[2] if self.speaking else self._scan
+        p.setPen(arc_pen)
+        for off, span in ((spin, 74), (spin + 120, 52), (spin + 240, 60)):
+            p.drawArc(seg_rect, int(off * 16), int(span * 16))
+
+        # Energy core glow at the center
+        inner = QRadialGradient(cx, cy, core_r * 0.58)
+        inner.setColorAt(0.0, QColor(255, 242, 214, 255))
+        inner.setColorAt(0.32, QColor(ar, ag, ab, 235))
+        inner.setColorAt(1.0, QColor(ar, ag, ab, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(inner))
+        p.drawEllipse(QPointF(cx, cy), core_r * 0.58, core_r * 0.58)
+
+        # Wordmark across the reactor (drawn live each frame)
+        wm_sz = int(max(11, fw * 0.046))
+        wm_rect = QRectF(cx - core_r, cy - core_r * 0.52, core_r * 2, core_r * 0.98)
+        p.setFont(QFont("Segoe UI", wm_sz, QFont.Weight.Black))
+        p.setPen(QColor(0, 0, 0, 140))
+        p.drawText(wm_rect.translated(1, 1), Qt.AlignmentFlag.AlignCenter, "J.A.R.V.I.S.")
+        p.setPen(QColor(248, 250, 255, 246))
+        p.drawText(wm_rect, Qt.AlignmentFlag.AlignCenter, "J.A.R.V.I.S.")
+
+        # Micro label below the wordmark
+        sub_sz = int(max(6, fw * 0.015))
+        sub_font = QFont("Segoe UI", sub_sz, QFont.Weight.Bold)
+        sub_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+        p.setFont(sub_font)
+        p.setPen(QColor(ar, ag, ab, 235))
+        p.drawText(QRectF(cx - core_r, cy + core_r * 0.2, core_r * 2, core_r * 0.36),
+                   Qt.AlignmentFlag.AlignCenter, "AI CORE")
+
+        # status text — distinct labels/colors per runtime state
         sy = cy + fw * 0.40
         if self.muted:
             txt, col = "MIC STATUS\nMUTED", QColor(255, 179, 0, 235)
         elif self.speaking:
             txt, col = "MIC STATUS\nSPEAKING", QColor(255, 255, 255, 235)
+        elif self.state == "ERROR":
+            txt, col = "SYSTEM ERROR", QColor(255, 64, 64, 245)
+        elif self.state in ("OFFLINE", "DISCONNECTED"):
+            txt, col = "OFFLINE", QColor(110, 118, 130, 235)
+        elif self.state in ("READY", "IDLE"):
+            txt, col = "AI CORE\nSTANDBY", QColor(120, 220, 170, 235)
+        elif self.state == "INITIALISING":
+            txt, col = "AI CORE\nBOOTING", QColor(255, 179, 0, 220)
         elif self.state == "THINKING":
             txt, col = "AI CORE\nTHINKING", QColor(255, 185, 96, 235)
         elif self.state in ("PROCESSING", "EXECUTING"):
@@ -1764,12 +1837,16 @@ class HudCanvas(QWidget):
         else:
             txt, col = f"AI CORE\n{self.state}", QColor(255, 255, 255, 220)
 
-        p.setPen(QPen(col, 1))
-        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        top_status, bottom_status = txt.split("\n", 1)
-        p.drawText(QRectF(0, sy, W, 18), Qt.AlignmentFlag.AlignCenter, top_status)
-        p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        p.drawText(QRectF(0, sy + 18, W, 24), Qt.AlignmentFlag.AlignCenter, bottom_status)
+        if txt == "SYSTEM ERROR" or txt == "OFFLINE":
+            p.setFont(QFont("Segoe UI", 10, QFont.Weight.Black))
+            p.drawText(QRectF(0, sy, W, 24), Qt.AlignmentFlag.AlignCenter, txt)
+        else:
+            p.setPen(QPen(col, 1))
+            p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            top_status, bottom_status = txt.split("\n", 1)
+            p.drawText(QRectF(0, sy, W, 18), Qt.AlignmentFlag.AlignCenter, top_status)
+            p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            p.drawText(QRectF(0, sy + 18, W, 24), Qt.AlignmentFlag.AlignCenter, bottom_status)
 
         # waveform
         wy = sy + 30
@@ -9358,47 +9435,72 @@ class SystemConnectivityPage(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(12)
         self._default_provider = QComboBox()
-        self._default_provider.addItems(["Google Gemini", "OpenRouter", "Local"])
-        
+        self._default_provider.addItems(["Google Gemini", "OpenRouter", "Local", "OmniRoute"])
+
         current_provider = self._load_app_settings().get("default_ai_provider", "Gemini")
         if current_provider in {"Gemini", "Google Gemini"}:
             self._default_provider.setCurrentText("Google Gemini")
         elif current_provider == "Local":
             self._default_provider.setCurrentText("Local")
+        elif current_provider == "OmniRoute":
+            self._default_provider.setCurrentText("OmniRoute")
         else:
             self._default_provider.setCurrentText("OpenRouter")
-            
+
         self._default_provider.currentTextChanged.connect(self._set_default_provider)
         controls.addWidget(QLabel("Default AI Provider"))
         controls.addWidget(self._default_provider, 1)
         lay1.addLayout(controls)
-        
-        # Local AI Settings
+
+        # Local AI Settings (Ollama / LM Studio)
         self._local_ai_widget = QWidget()
         local_lay = QVBoxLayout(self._local_ai_widget)
         local_lay.setContentsMargins(0, 0, 0, 0)
-        
+
         url_row = QHBoxLayout()
         url_row.addWidget(QLabel("Local Server URL"))
         self._local_url_input = QLineEdit(self._load_app_settings().get("local_ai_url", "http://localhost:11434/v1"))
         self._local_url_input.textChanged.connect(lambda t: self._set_setting("local_ai_url", t))
         url_row.addWidget(self._local_url_input, 1)
         local_lay.addLayout(url_row)
-        
+
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Local Model Name"))
         self._local_model_input = QLineEdit(self._load_app_settings().get("local_ai_model", "llama3.2"))
         self._local_model_input.textChanged.connect(lambda t: self._set_setting("local_ai_model", t))
         model_row.addWidget(self._local_model_input, 1)
         local_lay.addLayout(model_row)
-        
+
         self._local_ai_widget.setVisible(current_provider == "Local")
         self._default_provider.currentTextChanged.connect(lambda t: self._local_ai_widget.setVisible(t == "Local"))
-        
+
         lay1.addWidget(self._local_ai_widget)
-        
+
         self._auto_switch_btn = self._mk_toggle("Automatically switch if a provider fails", bool(self._load_app_settings().get("auto_provider_switch", True)), self._toggle_auto_provider_switch)
         lay1.addWidget(self._auto_switch_btn)
+
+        # OmniRoute — optional OpenAI-compatible router between Ollama and cloud
+        omni_row = QHBoxLayout()
+        omni_row.addWidget(QLabel("OmniRoute Endpoint"))
+        self._omni_url_input = QLineEdit(self._load_app_settings().get("omniroute_url", "http://127.0.0.1:39000/v1"))
+        self._omni_url_input.textChanged.connect(lambda t: self._set_setting("omniroute_url", t))
+        omni_row.addWidget(self._omni_url_input, 1)
+        lay1.addLayout(omni_row)
+
+        omni_model_row = QHBoxLayout()
+        omni_model_row.addWidget(QLabel("OmniRoute Model (optional)"))
+        self._omni_model_input = QLineEdit(self._load_app_settings().get("omniroute_model", ""))
+        self._omni_model_input.textChanged.connect(lambda t: self._set_setting("omniroute_model", t))
+        omni_model_row.addWidget(self._omni_model_input, 1)
+        lay1.addLayout(omni_model_row)
+
+        self._omni_enabled_btn = self._mk_toggle("Enable OmniRoute (router/fallback layer)", bool(self._load_app_settings().get("omniroute_enabled", False)), self._toggle_omniroute_enabled)
+        lay1.addWidget(self._omni_enabled_btn)
+
+        omni_hint = QLabel("OmniRoute is an optional local OpenAI-compatible router (e.g. LiteLLM-style gateway). When enabled it is tried between Ollama and cloud providers. It never fakes a response: if it is unreachable the chain reports it.")
+        omni_hint.setWordWrap(True)
+        omni_hint.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+        lay1.addWidget(omni_hint)
         lay.addWidget(card)
 
         # Mobile connect
@@ -9553,15 +9655,17 @@ class SystemConnectivityPage(QWidget):
         dl.addWidget(self._discord_msg)
         lay.addWidget(discord)
 
-        about = self._card("About J.A.R.V.I.S.", "J.A.R.V.I.S. information only.")
+        about = self._card("About J.A.R.V.I.S.", "Just A Rather Very Intelligent System")
         ab = about.layout()
         about_grid = QGridLayout()
         about_grid.setHorizontalSpacing(22)
         about_grid.setVerticalSpacing(8)
         entries = [
-            ("Version", "v1.0.0"),
-            ("Build Number", "2026.06.29"),
-            ("Release Date", "29 Jun 2026"),
+            ("Product", "J.A.R.V.I.S."),
+            ("Full Name", "Just A Rather Very Intelligent System"),
+            ("Version", "v0.2.0 (private J.A.R.V.I.S. build)"),
+            ("Owner", "Lucky"),
+            ("AI Router", self._ai_route_display()),
         ]
         self._about_values: dict[str, QLabel] = {}
         for idx, (label, value) in enumerate(entries):
@@ -9573,6 +9677,15 @@ class SystemConnectivityPage(QWidget):
             about_grid.addWidget(val, idx, 1)
             self._about_values[label] = val
         ab.addLayout(about_grid)
+
+        made_by = QLabel("Made by Lucky")
+        made_by.setStyleSheet("color: #ffb300; font-weight: 800; font-size: 15px; margin-top: 8px;")
+        ab.addWidget(made_by)
+        credit = QLabel("Original project: Brahma Echo by Suryaansh Tiwari "
+                        "(Brahma Source-Available License — private personal use).")
+        credit.setWordWrap(True)
+        credit.setStyleSheet(f"color: {C.TEXT_DIM}; font-size: 10px;")
+        ab.addWidget(credit)
         lay.addWidget(about)
 
         lay.addStretch(1)
@@ -9753,9 +9866,9 @@ class SystemConnectivityPage(QWidget):
         self._sys_note.setStyleSheet(f"color: {C.TEXT_MED};")
         lay.addWidget(self._sys_online)
         lay.addWidget(self._sys_note)
-        self._sys_version = QLabel("v1.0.0")
+        self._sys_version = QLabel("v0.2.0 (J.A.R.V.I.S. build)")
         self._sys_platform = QLabel(platform.system())
-        self._sys_provider = QLabel("Gemini")
+        self._sys_provider = QLabel(self._ai_route_display())
         self._sys_updated = QLabel(time.strftime("%d %b %Y %H:%M"))
         for label, val in (("Version", self._sys_version), ("Platform", self._sys_platform), ("Current AI Provider", self._sys_provider), ("Last Updated", self._sys_updated)):
             row = QHBoxLayout()
@@ -9895,11 +10008,55 @@ class SystemConnectivityPage(QWidget):
             provider = "Gemini"
         elif (text or "").strip().lower() == "local":
             provider = "Local"
+        elif (text or "").strip().lower() == "omniroute":
+            provider = "OmniRoute"
         else:
             provider = "OpenRouter"
         self._set_setting("default_ai_provider", provider)
+        self._refresh_route_labels()
         if self._ctrl() and hasattr(self._ctrl(), "write_log"):
             self._ctrl().write_log(f"SYS: Default AI provider set to {provider}.")
+
+    def _toggle_omniroute_enabled(self, checked: bool):
+        self._set_setting("omniroute_enabled", bool(checked))
+        self._refresh_route_labels()
+        if self._ctrl() and hasattr(self._ctrl(), "write_log"):
+            self._ctrl().write_log(f"SYS: OmniRoute {'enabled' if checked else 'disabled'}.")
+
+    def _ai_route_display(self) -> str:
+        """Human summary of the active AI route (used in About + System Status)."""
+        try:
+            settings = self._load_app_settings()
+        except Exception:
+            settings = {}
+        provider = str(settings.get("default_ai_provider") or "OpenRouter")
+        if provider == "Gemini":
+            base = "Google Gemini"
+        elif provider == "Local":
+            model = str(settings.get("local_ai_model") or "llama3.2")
+            base = f"Local Ollama ({model})"
+        elif provider == "OmniRoute":
+            base = "OmniRoute"
+        else:
+            base = "OpenRouter"
+        if settings.get("omniroute_enabled"):
+            base += " → OmniRoute fallback"
+        return base
+
+    def _refresh_route_labels(self):
+        display = self._ai_route_display()
+        for label in ("AI Provider", "AI Router"):
+            val = getattr(self, "_about_values", {}).get(label)
+            if val is not None:
+                try:
+                    val.setText(display)
+                except Exception:
+                    pass
+        if getattr(self, "_sys_provider", None) is not None:
+            try:
+                self._sys_provider.setText(display)
+            except Exception:
+                pass
 
     def _toggle_auto_provider_switch(self, checked: bool):
         self._set_setting("auto_provider_switch", bool(checked))
@@ -10102,7 +10259,7 @@ class SystemConnectivityPage(QWidget):
             # Base variables
             base_dir = Path(os.path.abspath("."))
             script_path = base_dir / "main.py"
-            icon_path = base_dir / "assets" / "Brahma_Lite_Logo.ico"
+            icon_path = base_dir / "assets" / "jarvis_logo.ico"
             
             python_exe = sys.executable
             if not python_exe:
@@ -11970,7 +12127,7 @@ class BrahmaConnectDevicesPage(QFrame):
             import io
             import qrcode
 
-            self._onboarding_offer = dict(service.create_pairing_offer(device_name="Brahma Connect", platform="gateway"))
+            self._onboarding_offer = dict(service.create_pairing_offer(device_name="J.A.R.V.I.S. Connect", platform="gateway"))
             code = str(self._onboarding_offer.get("pairing_code") or "------")
             self._onb_code_lbl.setText(code)
             self._onb_status_lbl.setText("WAITING FOR CONNECTION")
