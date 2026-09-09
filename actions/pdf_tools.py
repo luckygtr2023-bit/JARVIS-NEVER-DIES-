@@ -1,5 +1,5 @@
 """
-pdf_tools.py - Brahma AI PDF support
+pdf_tools.py - J.A.R.V.I.S. PDF support
 
 Creates editable-in-spirit PDF documents from structured content and converts
 existing DOCX / text files into readable PDFs without relying on LibreOffice.
@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-PROJECT_NAME = "Brahma AI - Lite"
+PROJECT_NAME = "J.A.R.V.I.S."
 DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
 
 
@@ -289,7 +289,7 @@ def create_pdf(parameters: dict, player=None) -> str:
     pdf = _import_pdf()
     title = (parameters.get("title") or parameters.get("name") or "Document").strip()
     subtitle = (parameters.get("subtitle") or "").strip()
-    output_path = _resolve_output_path(parameters.get("output_path"), title, ".pdf", "brahma_ai_output")
+    output_path = _resolve_output_path(parameters.get("output_path"), title, ".pdf", "jarvis_output")
     auto_open = parameters.get("auto_open", True)
     action = (parameters.get("action") or "create").lower().strip()
     source_path_str = (parameters.get("file_path") or "").strip()

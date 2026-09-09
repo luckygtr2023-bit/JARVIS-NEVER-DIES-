@@ -1,6 +1,6 @@
 # actions/calendar_scheduler.py
 """
-Calendar and Schedule Management for Brahma AI.
+Calendar and Schedule Management for J.A.R.V.I.S..
 
 Allows creating, listing, checking, and managing calendar appointments,
 meetings, and events with local persistent storage and .ics calendar exports.
@@ -219,7 +219,7 @@ def calendar_scheduler(
         ics_lines = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
-            "PRODID:-//Brahma AI//Calendar Scheduler//EN",
+            "PRODID:-//J.A.R.V.I.S.//Calendar Scheduler//EN",
         ]
         for ev in events:
             try:
@@ -240,7 +240,7 @@ def calendar_scheduler(
                 continue
         ics_lines.append("END:VCALENDAR")
 
-        desktop_ics = Path.home() / "Desktop" / "brahma_calendar.ics"
+        desktop_ics = Path.home() / "Desktop" / "jarvis_calendar.ics"
         desktop_ics.write_text("\n".join(ics_lines), encoding="utf-8")
         return f"Exported calendar events to {desktop_ics}"
 

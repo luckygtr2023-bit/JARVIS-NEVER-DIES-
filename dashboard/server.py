@@ -1,5 +1,5 @@
 """
-dashboard/server.py — Brahma Local HTTP Dashboard
+dashboard/server.py — J.A.R.V.I.S. Local HTTP Dashboard
 
 Plain HTTP on port 8000 (no SSL warnings, no firewall issues).
 Security at the application layer: AES-256-CBC with session-key-derived key.
@@ -238,7 +238,7 @@ def _ensure_network_access(port: int) -> None:
                 print("[Dashboard] Refresh your phone browser to connect.")
             else:
                 print("[Dashboard] Setup was not allowed.")
-                print("[Dashboard] Phone connections may fail until Brahma is run as Administrator.")
+                print("[Dashboard] Phone connections may fail until J.A.R.V.I.S. is run as Administrator.")
         except Exception as e:
             print(f"[Dashboard] Firewall setup error: {e}")
         finally:
