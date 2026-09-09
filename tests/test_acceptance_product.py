@@ -202,3 +202,80 @@ def test_responsive_layout_no_collapse():
     assert 'setMinimumSize(_MIN_W, _MIN_H)' in ui
     assert "_mw < 1450 and not self._right_collapsed" in ui   # auto rail collapse
     assert "_mw < 1240 and not self._left_collapsed" in ui
+
+
+# ---------------------------------------------------------------------------
+# HUD final visual correction (Devanagari-free, minimal background)
+# ---------------------------------------------------------------------------
+
+DEVANAGARI_TEXT_FILES = [
+    "ui.py", "main.py", "omniroute.py", "llm_client.py", "smart_home_page_new.py",
+    "workspace_store.py", "gesture_utils.py",
+]
+
+def test_no_devanagari_in_product_code():
+    """PASS - zero Devanagari characters (U+0900..U+097F) in product code."""
+    import unicodedata
+    for rel in DEVANAGARI_TEXT_FILES + [
+        "dashboard/server.py", "or_client.py", "setup.py", "requirements.txt",
+    ]:
+        text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        bad = [ch for ch in text if "ऀ" <= ch <= "ॿ"]
+        assert not bad, f"{rel} contains Devanagari: {bad}"
+    # no runtime Unicode escapes for Devanagari remain
+    for rel in ("ui.py", "main.py"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "\\u09" not in text, f"{rel} still has a \\u09 escape"
+
+
+def test_jarvis_name_uses_latin_only():
+    """PASS - every wordmark rendered by the UI is the deterministic Latin
+    string J.A.R.V.I.S.; the Devanagari जार्विस must not appear."""
+    ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+    assert "जार्विस" not in ui
+    # the launcher core wordmark and the reactor wordmark are literal Latin text
+    assert 'drawText(QRectF(cx - 27, cy - 9, 54, 18), Qt.AlignmentFlag.AlignCenter, "J.A.R.V.I.S.")' in ui
+    assert '"J.A.R.V.I.S."' in ui
+    assert "Nirmala UI" not in ui          # Hindi font no longer used
+    # CommandBar mini-logo uses the deterministic app logo pixmap, not a glyph
+    assert "logo_lbl.setPixmap(_logo_pixmap(22))" in ui
+
+
+def test_logo_assets_metadata_clean_and_latin():
+    """PASS - logo rasters are freshly generated, metadata-free and valid."""
+    import struct, pathlib
+    def text_chunks(path: pathlib.Path):
+        data = path.read_bytes()
+        assert data[:8] == b"\x89PNG\r\n\x1a\n", f"{path} not a PNG"
+        pos, out = 8, []
+        while pos < len(data):
+            ln = struct.unpack(">I", data[pos:pos + 4])[0]
+            typ = data[pos + 4:pos + 8].decode("latin-1")
+            if typ in ("tEXt", "iTXt", "zTXt"):
+                out.append(typ)
+            pos += 12 + ln
+        return out
+    for rel in ("assets/jarvis_logo.png", "assets/jarvis_logo_master.png",
+                "brahma-connect-android/app/src/main/res/drawable/ic_jarvis_launcher.png"):
+        p = ROOT / rel
+        assert p.exists(), rel
+        assert not text_chunks(p), f"{rel} carries embedded text metadata"
+    from PIL import Image
+    ico = Image.open(ROOT / "assets/jarvis_logo.ico")
+    sizes = sorted(ico.ico.sizes())
+    assert sizes == [(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)], sizes
+
+
+def test_hud_background_minimal():
+    """STATIC PASS - the HUD backdrop is a restrained dark canvas: heavy grid,
+    equalizer 'signal noise', corner brackets and dense halo rings removed."""
+    ui = (ROOT / "ui.py").read_text(encoding="utf-8")
+    for removed in ("fine tactical grid", "corner brackets", "signal noise",
+                    "for i in range(10):", "for side in (-1, 1):"):
+        assert removed not in ui, f"busy decoration still present: {removed}"
+    for kept in ("subtle pulse rings", "spinning arc rings", "single thin scanner arc",
+                 "restrained ambient glow", "thin crosshair", "tick marks (thin, faint)"):
+        assert kept in ui, f"minimal-geometry section missing: {kept}"
+    assert "self.hud.hide()" not in ui
+    assert "J.A.R.V.I.S." in ui            # branding kept
+    assert 'word_font = QFont("Segoe UI", 8' in ui

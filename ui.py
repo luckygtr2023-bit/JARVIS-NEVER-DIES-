@@ -1569,23 +1569,23 @@ class HudCanvas(QWidget):
         now = time.time()
         if now - self._last_t > (0.12 if self.speaking else 0.5):
             if self.speaking:
-                self._tgt_scale = random.uniform(1.06, 1.14)
-                self._tgt_halo  = random.uniform(145, 190)
+                self._tgt_scale = random.uniform(1.04, 1.10)
+                self._tgt_halo  = random.uniform(110, 150)
             elif self.muted:
                 self._tgt_scale = random.uniform(0.998, 1.002)
-                self._tgt_halo  = random.uniform(15, 28)
+                self._tgt_halo  = random.uniform(8, 16)
             elif self.state == "LISTENING":
-                self._tgt_scale = random.uniform(1.008, 1.018)
-                self._tgt_halo  = random.uniform(90, 122)
+                self._tgt_scale = random.uniform(1.006, 1.014)
+                self._tgt_halo  = random.uniform(46, 66)
             elif self.state == "THINKING":
-                self._tgt_scale = random.uniform(1.012, 1.024)
-                self._tgt_halo  = random.uniform(78, 105)
+                self._tgt_scale = random.uniform(1.010, 1.020)
+                self._tgt_halo  = random.uniform(40, 58)
             elif self.state in ("EXECUTING", "PROCESSING"):
-                self._tgt_scale = random.uniform(1.016, 1.032)
-                self._tgt_halo  = random.uniform(110, 148)
+                self._tgt_scale = random.uniform(1.012, 1.026)
+                self._tgt_halo  = random.uniform(62, 92)
             else:
-                self._tgt_scale = random.uniform(1.001, 1.008)
-                self._tgt_halo  = random.uniform(48, 68)
+                self._tgt_scale = random.uniform(1.001, 1.006)
+                self._tgt_halo  = random.uniform(26, 40)
             self._last_t = now
 
         sp = 0.38 if self.speaking else 0.15
@@ -1603,10 +1603,10 @@ class HudCanvas(QWidget):
         lim = fw * 0.74
         spd = 4.2 if self.speaking else 2.0
         self._pulses = [r + spd for r in self._pulses if r + spd < lim]
-        if len(self._pulses) < 3 and random.random() < (0.07 if self.speaking else 0.025):
+        if len(self._pulses) < 2 and random.random() < (0.045 if self.speaking else 0.012):
             self._pulses.append(0.0)
 
-        if self.speaking and random.random() < 0.28:
+        if self.speaking and random.random() < 0.12:
             cx, cy = self.width() / 2, self.height() / 2
             ang = random.uniform(0, 2 * math.pi)
             r_s = fw * 0.28
@@ -1657,48 +1657,27 @@ class HudCanvas(QWidget):
         cx, cy = W / 2, H / 2
         fw = min(W, H)
 
-        # fine tactical grid and red signal noise
-        p.setPen(QPen(QColor(255, 255, 255, 8), 1))
-        for x in range(0, W, 48):
-            for y in range(0, H, 48):
-                p.drawPoint(x, y)
-        p.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), 48), 1))
-        for side in (-1, 1):
-            base_x = cx + side * fw * 0.37
-            base_y = cy
-            for i in range(68):
-                x = base_x + side * (i * 1.4)
-                h = 4 + abs(math.sin(self._tick * 0.04 + i * 0.35)) * (8 + (i % 9) * 2)
-                if i % 11 == 0:
-                    h *= 1.8
-                p.drawLine(QPointF(x, base_y - h), QPointF(x, base_y + h))
-            p.drawLine(QPointF(base_x - side * 130, base_y), QPointF(base_x + side * 155, base_y))
-
-        r_face = fw * 0.34
-
-        # halo glow
-        for i in range(10):
-            r   = r_face * (1.8 - i * 0.08)
-            frc = 1.0 - i / 10
-            a   = max(0, min(255, int(self._halo * 0.055 * frc)))
-            col = QColor(255, 179, 0, a)
-            p.setPen(QPen(col, 1.2)); p.setBrush(Qt.BrushStyle.NoBrush)
+        # minimal backdrop: two very faint thin HUD rings around the core only
+        for rr, aa in ((0.585, 16), (0.545, 10)):
+            r   = fw * rr
+            p.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), aa), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
 
-        # pulse rings
+        # subtle pulse rings
         for pr in self._pulses:
-            a   = max(0, int(230 * (1.0 - pr / (fw * 0.74))))
-            col = QColor(255, 179, 0, a)
-            p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
+            a   = max(0, int(90 * (1.0 - pr / (fw * 0.74))))
+            col = QColor(accent.red(), accent.green(), accent.blue(), a)
+            p.setPen(QPen(col, 1.0)); p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
 
-        # spinning arc rings
+        # spinning arc rings (thin, restrained)
         for idx, (r_frac, w_r, arc_l, gap) in enumerate(
-            [(0.48, 1.9, 115, 78), (0.42, 1.4, 78, 55), (0.35, 1.0, 56, 40)]
+            [(0.47, 1.2, 92, 84), (0.415, 1.0, 64, 62), (0.355, 0.8, 44, 44)]
         ):
             ring_r = fw * r_frac
             base   = self._rings[idx]
-            a_val  = max(0, min(180, int(self._halo * 0.45 * (1.0 - idx * 0.18))))
+            a_val  = max(0, min(120, int(self._halo * 0.30 * (1.0 - idx * 0.16))))
             col    = QColor(accent.red(), accent.green(), accent.blue(), a_val)
             p.setPen(QPen(col, w_r)); p.setBrush(Qt.BrushStyle.NoBrush)
             angle = base
@@ -1707,20 +1686,18 @@ class HudCanvas(QWidget):
                 p.drawArc(rect, int(angle * 16), int(arc_l * 16))
                 angle += arc_l + gap
 
-        # scanners
-        sr = fw * 0.50
-        sa = min(200, int(self._halo * 0.8))
-        ex = 75 if self.speaking else 44
-        p.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), sa), 1.5))
+        # single thin scanner arc
+        sr = fw * 0.485
+        sa = max(18, min(90, int(self._halo * 0.30)))
+        ex = 52 if self.speaking else 30
+        p.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), sa), 1.0))
         p.setBrush(Qt.BrushStyle.NoBrush)
         srect = QRectF(cx - sr, cy - sr, sr * 2, sr * 2)
         p.drawArc(srect, int(self._scan * 16), int(ex * 16))
-        p.setPen(QPen(QColor(255, 255, 255, max(28, sa // 4)), 1.0))
-        p.drawArc(srect, int(self._scan2 * 16), int(ex * 16))
 
-        # tick marks
+        # tick marks (thin, faint)
         t_out, t_in = fw * 0.497, fw * 0.474
-        p.setPen(QPen(QColor(245, 248, 255, 145), 1))
+        p.setPen(QPen(QColor(235, 240, 248, 52), 1))
         for deg in range(0, 360, 10):
             rad = math.radians(deg)
             inn = t_in if deg % 30 == 0 else t_in + 6
@@ -1729,23 +1706,14 @@ class HudCanvas(QWidget):
                 QPointF(cx + inn  * math.cos(rad), cy - inn  * math.sin(rad)),
             )
 
-        # crosshair
-        ch_r, gap_h = fw * 0.51, fw * 0.16
-        p.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), int(self._halo * 0.5)), 1))
+        # thin crosshair
+        ch_r, gap_h = fw * 0.51, fw * 0.17
+        p.setPen(QPen(QColor(accent.red(), accent.green(), accent.blue(), max(14, int(self._halo * 0.22))), 1))
         p.drawLine(QPointF(cx - ch_r, cy), QPointF(cx - gap_h, cy))
         p.drawLine(QPointF(cx + gap_h, cy), QPointF(cx + ch_r, cy))
         p.drawLine(QPointF(cx, cy - ch_r), QPointF(cx, cy - gap_h))
         p.drawLine(QPointF(cx, cy + gap_h), QPointF(cx, cy + ch_r))
 
-        # corner brackets
-        bl = 28
-        bc = QColor(accent.red(), accent.green(), accent.blue(), 120)
-        hl, hr = cx - fw // 2, cx + fw // 2
-        ht, hb = cy - fw // 2, cy + fw // 2
-        p.setPen(QPen(bc, 1.5))
-        for bx, by, dx, dy in [(hl,ht,1,1),(hr,ht,-1,1),(hl,hb,1,-1),(hr,hb,-1,-1)]:
-            p.drawLine(QPointF(bx, by), QPointF(bx + dx * bl, by))
-            p.drawLine(QPointF(bx, by), QPointF(bx, by + dy * bl))
 
         # ── J.A.R.V.I.S. ARC-REACTOR CORE ────────────────────────────────────
         # Central glowing reactor rendered live each frame (no static image).
@@ -1754,15 +1722,15 @@ class HudCanvas(QWidget):
         boost   = 1.25 if self.state == "ERROR" else 1.0
         ar, ag, ab = accent.red(), accent.green(), accent.blue()
 
-        # Wide ambient glow breathing with activity
-        glow_a = min(215, int(self._halo * (0.75 + 0.35 * pulse) * boost))
-        glow = QRadialGradient(cx, cy, core_r * 1.55)
+        # restrained ambient glow behind the reactor
+        glow_a = min(150, int(self._halo * (0.55 + 0.22 * pulse) * boost))
+        glow = QRadialGradient(cx, cy, core_r * 1.28)
         glow.setColorAt(0.0,  QColor(ar, ag, ab, glow_a))
-        glow.setColorAt(0.55, QColor(ar, ag, ab, max(12, glow_a // 4)))
+        glow.setColorAt(0.6,  QColor(ar, ag, ab, max(10, glow_a // 4)))
         glow.setColorAt(1.0,  QColor(ar, ag, ab, 0))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(glow))
-        p.drawEllipse(QPointF(cx, cy), core_r * 1.55, core_r * 1.55)
+        p.drawEllipse(QPointF(cx, cy), core_r * 1.28, core_r * 1.28)
 
         # Dark reactor dish
         dish = QRadialGradient(cx - core_r * 0.3, cy - core_r * 0.35, core_r * 1.7)
@@ -1848,9 +1816,9 @@ class HudCanvas(QWidget):
             p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
             p.drawText(QRectF(0, sy + 18, W, 24), Qt.AlignmentFlag.AlignCenter, bottom_status)
 
-        # waveform
+        # waveform (compact)
         wy = sy + 30
-        N, bw = 36, 8
+        N, bw = 24, 9
         wx0 = (W - N * bw) / 2
         for i in range(N):
             if self.muted:
@@ -5419,10 +5387,10 @@ class CommandBar(QWidget):
         """)
         logo_lay = QVBoxLayout(logo_frame)
         logo_lay.setContentsMargins(0, 0, 0, 0)
-        logo_lbl = QLabel("\u092C\u094D\u0930")  # ब्र (short Hindi)
+        logo_lbl = QLabel()
         logo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo_lbl.setFont(QFont("Nirmala UI", 9, QFont.Weight.Bold))
-        logo_lbl.setStyleSheet("color: #ffb300; background: transparent; border: none;")
+        logo_lbl.setPixmap(_logo_pixmap(22))
+        logo_lbl.setStyleSheet("background: transparent; border: none;")
         logo_lay.addWidget(logo_lbl)
         lay.addWidget(logo_frame)
 
@@ -6791,11 +6759,13 @@ class FloatingLauncher(QWidget):
                 painter.setBrush(QBrush(QColor(chead.red(), chead.green(), chead.blue(), min(255, head_alpha))))
                 painter.drawEllipse(QPointF(hx, hy), head_size, head_size)
 
-        # ── 6. Hindi J.A.R.V.I.S. text "ब्रह्मा इको" ──
+        # ── 6. J.A.R.V.I.S. wordmark (deterministic Latin text) ──
         text_alpha = int((210 + breath * 45) * hover_boost)
         painter.setPen(QPen(QColor(ar, ag, ab, min(255, text_alpha))))
-        painter.setFont(QFont("Nirmala UI", 11, QFont.Weight.Bold))
-        painter.drawText(QRectF(cx - 22, cy - 10, 44, 20), Qt.AlignmentFlag.AlignCenter, "\u091C\u093E\u0930\u094D\u0935\u093F\u0938")
+        word_font = QFont("Segoe UI", 8, QFont.Weight.Black)
+        word_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -0.3)
+        painter.setFont(word_font)
+        painter.drawText(QRectF(cx - 27, cy - 9, 54, 18), Qt.AlignmentFlag.AlignCenter, "J.A.R.V.I.S.")
 
         painter.end()
 
