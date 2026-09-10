@@ -652,7 +652,7 @@ def _default_app_settings() -> dict:
         "developer_mode_workspace": "",
         # OmniRoute — optional OpenAI-compatible routing layer (see omniroute.py)
         "omniroute_enabled": False,
-        "omniroute_url": "http://127.0.0.1:39000/v1",
+        "omniroute_url": "http://localhost:20128",
         "omniroute_model": "",
     }
 
@@ -9772,7 +9772,7 @@ class SystemConnectivityPage(QWidget):
         # OmniRoute — optional OpenAI-compatible router between Ollama and cloud
         omni_row = QHBoxLayout()
         omni_row.addWidget(QLabel("OmniRoute Endpoint"))
-        self._omni_url_input = QLineEdit(self._load_app_settings().get("omniroute_url", "http://127.0.0.1:39000/v1"))
+        self._omni_url_input = QLineEdit(self._load_app_settings().get("omniroute_url", "http://localhost:20128"))
         self._omni_url_input.textChanged.connect(lambda t: self._set_setting("omniroute_url", t))
         omni_row.addWidget(self._omni_url_input, 1)
         lay1.addLayout(omni_row)
