@@ -59,7 +59,12 @@ from PyQt6.QtCore import QTimer
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
-from actions.attention_monitor import AttentionMonitor, speak_native, stop_native_speech, handle_call_action, read_event_preview, set_speech_sink
+from actions.attention_monitor import (
+    AttentionMonitor, speak_native, stop_native_speech, handle_call_action,
+    read_event_preview, set_speech_sink, set_speech_telemetry,
+)
+from streaming import SentenceChunker, stream_text_to_tts
+from voice_pipeline import VoiceActivityDetector, VoiceLatencyRecorder, VoiceVADConfig
 # from actions.daily_briefing import compile_daily_briefing
 from llm_client import client as openrouter_client
 from workspace_store import store as workspace_store
@@ -97,7 +102,13 @@ LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE          = 1024
+# 512 frames is 32 ms at 16 kHz (half the previous 64 ms callback), which
+# reduces VAD and output-buffer quantization without adding a dependency.  It
+# remains configurable for devices that prefer the old larger block.
+try:
+    CHUNK_SIZE = max(256, int(os.getenv("JARVIS_VOICE_CHUNK_FRAMES", "512")))
+except (TypeError, ValueError):
+    CHUNK_SIZE = 512
 LIVE_CONNECT_TIMEOUT = 12
 
 
@@ -1468,6 +1479,12 @@ class BrahmaLive:
         self.audio_in_queue = None
         self.out_queue      = None
         self._loop          = None
+        # Gemini Live already provides streaming STT/LLM/native TTS.  Keep a
+        # lightweight local VAD only for fast end-of-speech timing and honest
+        # per-stage telemetry; it never replaces the Live audio stream.
+        self._voice_vad = VoiceActivityDetector(VoiceVADConfig.from_env())
+        self._voice_latency = VoiceLatencyRecorder()
+        self._voice_barge_in_enabled = os.getenv("JARVIS_VOICE_BARGE_IN", "0").strip().lower() in {"1", "true", "yes"}
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
         self._use_openrouter_first = False
@@ -1478,6 +1495,7 @@ class BrahmaLive:
         self._attention_monitor = AttentionMonitor(on_event=self._on_external_notification)
         try:
             set_speech_sink(self.speak)
+            set_speech_telemetry(self._on_native_tts_stage)
         except Exception:
             pass
             
@@ -1509,6 +1527,15 @@ class BrahmaLive:
         ]
         self._idle_speech_thread = threading.Thread(target=self._idle_speech_loop, daemon=True)
         self._idle_speech_thread.start()
+
+    def _on_native_tts_stage(self, stage: str) -> None:
+        """Bridge file-based Edge fallback markers into turn telemetry."""
+        if self._voice_latency.current is None:
+            return
+        if stage == "tts_first_audio":
+            self._voice_latency.mark("tts_first_audio")
+        elif stage == "playback_started":
+            self._voice_latency.mark("playback_started")
 
     def _reset_idle_activity(self):
         self._last_activity = time.monotonic()
@@ -2660,6 +2687,24 @@ class BrahmaLive:
             intent = classify_intent(text)
             print(f"[J.A.R.V.I.S.] 🔀 {intent.describe()}")
 
+            # Fast path: direct knowledge, reasoning, and conversational
+            # requests use the provider's token stream immediately.  Tool,
+            # browser, research, and multi-step intents stay on the full
+            # pipeline below so streaming never bypasses safety or tools.
+            if intent.kind in (IntentKind.ANSWER_KNOWLEDGE, IntentKind.REASONING, IntentKind.CHITCHAT):
+                try:
+                    reply = self._stream_fast_voice_reply(text, memory_ctx, intent)
+                    if reply:
+                        self.ui.write_log(f"JARVIS: {reply}")
+                        self.ui.finish_task_workspace(reply, "Reply delivered.", 100)
+                        if not self.ui.muted:
+                            self.ui.set_state("LISTENING")
+                        return
+                except Exception as exc:
+                    # Streaming is an optimization, never a new failure mode.
+                    # Fall through to the established complete-response chain.
+                    print(f"[VoiceFastPath] unavailable; using full chain: {exc}")
+
             def _run_command(in_intent):
                 # Open-app requests are executable from the fallback path via
                 # the existing open_app action. Complex action commands are not.
@@ -2731,6 +2776,58 @@ class BrahmaLive:
                 self.ui.set_state("LISTENING")
 
 
+    def _stream_fast_voice_reply(self, text: str, memory_ctx: str, intent) -> str:
+        """Stream a fast-path answer into serial sentence TTS chunks.
+
+        This is used only when the Gemini Live session is unavailable.  The
+        normal Live session remains the lowest-latency path because its audio
+        output is already streamed by the server.  The fallback deliberately
+        keeps the configured Local Ollama -> OmniRoute -> OpenRouter chain.
+        """
+        from llm_client import client as unified
+
+        if getattr(intent, "kind", None).value == "REASONING":
+            system = (
+                "You are J.A.R.V.I.S. Give a concise but genuine explanation. "
+                "Reason through why/how or the comparison, then state the conclusion."
+            )
+        elif getattr(intent, "kind", None).value == "CHITCHAT":
+            system = "You are J.A.R.V.I.S. Be warm, concise, and conversational."
+        else:
+            system = (
+                "You are J.A.R.V.I.S. Answer directly and accurately in a few "
+                "natural sentences. Do not claim to have used tools or searched."
+            )
+        prompt = f"{memory_ctx}\n\n{text}" if memory_ctx else text
+        token_stream = unified.chat_stream(
+            prompt,
+            system=system,
+            max_tokens=768,
+            temperature=0.45,
+        )
+        spoken_chunks: list[str] = []
+        self.set_speaking(True)
+        try:
+            def speak_chunk(chunk: str) -> None:
+                spoken_chunks.append(chunk)
+                # Edge/MCI is technically file-based, but each sentence starts
+                # as soon as it is available instead of waiting for the full
+                # model response.  Gemini Live remains true streaming TTS.
+                from actions.attention_monitor import _speak_edge_native
+                if not _speak_edge_native(chunk):
+                    raise RuntimeError("TTS unavailable or playback failed")
+
+            reply = stream_text_to_tts(
+                token_stream,
+                speak_chunk,
+                chunker=SentenceChunker(max_chars=220),
+            )
+            if not reply:
+                raise RuntimeError("stream returned no text")
+            return reply
+        finally:
+            self.set_speaking(False)
+
     def set_speaking(self, value: bool):
         with self._speaking_lock:
             self._is_speaking = value
@@ -2760,7 +2857,8 @@ class BrahmaLive:
                 try:
                     self.set_speaking(True)
                     from actions.attention_monitor import _speak_edge_native
-                    _speak_edge_native(text)
+                    if not _speak_edge_native(text):
+                        print("[J.A.R.V.I.S.] TTS unavailable or playback failed")
                 finally:
                     self.set_speaking(False)
             threading.Thread(target=_speak_thread, daemon=True).start()
@@ -2797,7 +2895,7 @@ class BrahmaLive:
             "Remain completely silent until the user speaks to you or asks a question."
         )
 
-        return types.LiveConnectConfig(
+        config_kwargs = dict(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
@@ -2812,6 +2910,22 @@ class BrahmaLive:
                 )
             ),
         )
+        # Gemini Live owns the actual streaming STT/VAD.  Tune its automatic
+        # activity detector to the same configurable hangover as the local
+        # observer.  Older google-genai releases do not expose this field, so
+        # retain a compatibility fallback instead of breaking startup.
+        try:
+            config_kwargs["realtime_input_config"] = {
+                "automatic_activity_detection": {
+                    "disabled": False,
+                    "prefix_padding_ms": max(20, self._voice_vad.config.speech_onset_ms),
+                    "silence_duration_ms": self._voice_vad.config.silence_timeout_ms,
+                }
+            }
+            return types.LiveConnectConfig(**config_kwargs)
+        except (TypeError, AttributeError, ValueError):
+            print("[VoiceLatency] google-genai does not support realtime VAD tuning; using SDK defaults")
+            return types.LiveConnectConfig(**{k: v for k, v in config_kwargs.items() if k != "realtime_input_config"})
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
@@ -3147,9 +3261,39 @@ class BrahmaLive:
                 if self._dashboard._phone_audio_queue.empty():
                     self._phone_active = False
 
+    def _on_voice_vad_event(self, event) -> None:
+        if event is None:
+            return
+        if event.kind == "speech_start":
+            self._voice_latency.start_turn(event.timestamp, source="gemini-live")
+            print("[VoiceLatency] speech onset detected")
+            if self._voice_barge_in_enabled and self._is_speaking:
+                # This is intentionally opt-in.  It stops already-buffered
+                # local audio after confirmed onset; Gemini's server response
+                # is not cancelled because doing so is SDK-version dependent.
+                # The default remains off to avoid accidental interruptions.
+                try:
+                    stop_native_speech()
+                except Exception:
+                    pass
+                if self.audio_in_queue is not None:
+                    try:
+                        while True:
+                            self.audio_in_queue.get_nowait()
+                    except Exception:
+                        pass
+                current = self._voice_latency.current
+                if current is not None:
+                    current.notes.append("optional local barge-in cleared buffered playback")
+        elif event.kind == "speech_end":
+            self._voice_latency.mark_vad_end(event.silence_duration_ms, event.timestamp)
+            print(f"[VoiceLatency] T0 user speech ended; silence={event.silence_duration_ms:.1f}ms")
+
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
+            if self._voice_latency.current is not None:
+                self._voice_latency.mark("llm_request_started")
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
@@ -3164,11 +3308,18 @@ class BrahmaLive:
                 return
             
             if not self.ui.muted or getattr(self.ui, "_wakeword_listening", False):
-                # Calculate RMS volume of the chunk
+                # Calculate RMS volume of the chunk.  The local VAD only
+                # observes this value; PCM continues to flow to Gemini Live.
                 rms = np.sqrt(np.mean(np.square(indata, dtype=np.float32)))
-                
-                # Smart Echo Gate: High threshold if AI is speaking, very low if silent
-                threshold = 1200.0 if brahma_speaking else 10.0
+                vad_event = self._voice_vad.process(
+                    rms,
+                    timestamp=time.monotonic(),
+                    threshold_override=(self._voice_vad.config.echo_rms_threshold if brahma_speaking else None),
+                )
+                self._on_voice_vad_event(vad_event)
+
+                # Smart Echo Gate: High threshold if AI is speaking, low when silent.
+                threshold = self._voice_vad.config.echo_rms_threshold if brahma_speaking else self._voice_vad.config.base_rms_threshold
                 
                 if rms > threshold:
                     data = indata.tobytes()
@@ -3205,6 +3356,12 @@ class BrahmaLive:
                 async for response in self.session.receive():
 
                     if response.data:
+                        if self._voice_latency.current is not None:
+                            current = self._voice_latency.current
+                            if "model_first_audio" not in current.timestamps:
+                                self._voice_latency.mark("model_first_audio")
+                                current.notes.append("Gemini Live response is native audio; first text-token timing requires output transcription")
+                            self._voice_latency.mark("tts_first_audio")
                         self.audio_in_queue.put_nowait(response.data)
 
                     if response.server_content:
@@ -3214,6 +3371,8 @@ class BrahmaLive:
                             self.set_speaking(True)
                             txt = sc.output_transcription.text.strip()
                             if txt:
+                                if self._voice_latency.current is not None:
+                                    self._voice_latency.mark("llm_first_token")
                                 out_buf.append(txt)
 
                         if sc.input_transcription and sc.input_transcription.text:
@@ -3225,6 +3384,17 @@ class BrahmaLive:
                                 except Exception:
                                     pass
                                 in_buf.append(txt)
+                                if self._voice_latency.current is not None:
+                                    current = self._voice_latency.current
+                                    if "transcript_available" not in current.timestamps:
+                                        self._voice_latency.mark("transcript_available")
+                                        try:
+                                            from agent.intent import classify_intent
+                                            classify_intent(txt)
+                                            self._voice_latency.mark("intent_detected")
+                                            current.notes.append("Gemini Live server-side planner is inside the persistent session and not separately exposed")
+                                        except Exception as exc:
+                                            current.notes.append(f"intent timing unavailable: {exc}")
                                 if self.ui.muted and _wakeword_detected(txt):
                                     try:
                                         self.ui.set_muted_state(False, wakeword=True)
@@ -3245,6 +3415,12 @@ class BrahmaLive:
                                 self.ui.write_log(f"JARVIS: {full_out}")
                             out_buf = []
 
+                            metrics = self._voice_latency.complete(
+                                note="Gemini Live turn_complete received; native audio is streamed to the persistent output stream"
+                            )
+                            if metrics:
+                                print(f"[VoiceLatency] {json.dumps(metrics.get('metrics_ms', {}), separators=(',', ':'))}")
+
                             if full_in and len(full_in) > 5:
                                 threading.Thread(
                                     target=_update_memory_async,
@@ -3264,6 +3440,7 @@ class BrahmaLive:
 
         except Exception as e:
             print(f"[J.A.R.V.I.S.] ❌ Recv: {e}")
+            self._voice_latency.complete(note=f"receive failure: {e}")
             traceback.print_exc()
             raise
 
@@ -3278,13 +3455,19 @@ class BrahmaLive:
             blocksize=CHUNK_SIZE,
         )
         stream.start()
+        self._audio_output_ready_at = time.monotonic()
         try:
             while True:
                 chunk = await self.audio_in_queue.get()
+                if self._voice_latency.current is not None:
+                    self._voice_latency.mark("playback_started")
                 self.set_speaking(True)
+                # The stream is opened once per Live connection, not once per
+                # sentence.  Raw PCM is written immediately as chunks arrive.
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
             print(f"[J.A.R.V.I.S.] ❌ Play: {e}")
+            self._voice_latency.complete(note=f"playback failure: {e}")
             raise
         finally:
             self.set_speaking(False)
@@ -3344,7 +3527,8 @@ class BrahmaLive:
                         self.session        = session
                         self._loop          = asyncio.get_event_loop()
                         self.audio_in_queue = asyncio.Queue()
-                        self.out_queue      = asyncio.Queue()  # Fix: removed maxsize=10 to prevent dropping packets
+                        self.out_queue      = asyncio.Queue()  # unbounded: never drop PCM packets
+                        self._voice_vad.reset()
                         
                         print("[J.A.R.V.I.S.] ✅ Connected.")
                         try:

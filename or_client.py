@@ -4,9 +4,11 @@ import time
 import base64
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Iterator
 
 import requests
+
+from streaming import iter_sse_content
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openrouter_client")
@@ -82,6 +84,9 @@ class OpenRouterClient:
 
     def __init__(self) -> None:
         self.api_key  = _load_api_key()
+        # Keep one HTTP session for streamed fallback turns.  This avoids a
+        # fresh TCP/TLS handshake for every sentence/utterance.
+        self._stream_session = requests.Session()
         self._headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type":  "application/json",
@@ -178,6 +183,88 @@ class OpenRouterClient:
                 time.sleep(RETRY_DELAY)
 
         return None
+
+    def _stream_call(
+        self,
+        model: str,
+        messages: list[dict],
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> Iterator[str]:
+        if not self.api_key:
+            raise PermissionError(
+                "[OpenRouter] API key is missing. Add a valid key in config/api_keys.json."
+            )
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+        response = self._stream_session.post(
+            API_URL,
+            headers=self._headers,
+            json=payload,
+            timeout=REQUEST_TIMEOUT,
+            stream=True,
+        )
+        try:
+            if response.status_code == 401:
+                raise PermissionError("[OpenRouter] Authentication failed while streaming.")
+            if response.status_code == 403:
+                raise PermissionError("[OpenRouter] Access denied while streaming.")
+            if response.status_code == 429:
+                self._mark_rate_limited(model)
+                return
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"[OpenRouter] {model} → HTTP {response.status_code} while streaming"
+                )
+            yield from iter_sse_content(response)
+        finally:
+            close = getattr(response, "close", None)
+            if close:
+                close()
+
+    def chat_stream(
+        self,
+        prompt: str,
+        system: str = (
+            "You are a component of J.A.R.V.I.S. (Just A Rather Very Intelligent System), "
+            "a private personal AI assistant. Be concise, helpful, and precise."
+        ),
+        history: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = 0.5,
+    ) -> Iterator[str]:
+        """Stream from OpenRouter, moving to the next model before speech."""
+        messages = [{"role": "system", "content": system}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+        models = [model] if model else []
+        models.extend(TEXT_MODELS)
+        errors: list[str] = []
+        for selected in models:
+            if not selected or self._is_rate_limited(selected):
+                continue
+            received = False
+            try:
+                for delta in self._stream_call(selected, messages, max_tokens, temperature):
+                    if delta:
+                        received = True
+                        yield delta
+                if received:
+                    return
+                errors.append(f"{selected} returned an empty stream")
+            except PermissionError:
+                raise
+            except Exception as exc:
+                errors.append(f"{selected} failed ({exc})")
+        detail = "; ".join(errors) if errors else "no configured model responded"
+        raise RuntimeError(f"[OpenRouter] Streaming failed: {detail}")
 
     def _call_with_fallback(
         self,

@@ -15,7 +15,7 @@ Architecture position:
 
 Configuration (config/app_settings.json):
     omniroute_enabled : bool   (default False)
-    omniroute_url     : str    (default http://127.0.0.1:39000/v1)
+    omniroute_url     : str    (default http://localhost:20128)
     omniroute_model   : str    (optional override model name)
 
 Optional credential (config/api_keys.json):
@@ -33,13 +33,18 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Iterator
 
 import requests
 
+from streaming import iter_sse_content
+
 logger = logging.getLogger("omniroute")
 
-DEFAULT_OMNIROUTE_URL = "http://127.0.0.1:39000/v1"
+# OmniRoute's chat-completions route is intentionally kept on the existing
+# Windows localhost gateway.  Do not expose this URL to Android; Android
+# continues to use the trusted LAN gateway/NSD path.
+DEFAULT_OMNIROUTE_URL = "http://localhost:20128"
 CONNECT_TIMEOUT = 8.0
 READ_TIMEOUT = 150.0
 
@@ -67,6 +72,10 @@ class OmniRouteClient:
         self._url = DEFAULT_OMNIROUTE_URL
         self._model = ""
         self._api_key = ""
+        # Reuse the TCP connection for successive streamed turns when the
+        # gateway supports keep-alive.  Credentials are still loaded from the
+        # existing protected config path and never logged.
+        self._stream_session = requests.Session()
         self.reload()
 
     def reload(self) -> None:
@@ -208,6 +217,51 @@ class OmniRouteClient:
         return self._request(self._payload(messages, temperature=temperature,
                                            max_tokens=max_tokens,
                                            response_format=None, model=model))
+
+    def chat_stream(self, prompt: str, system: str = "You are a helpful assistant.",
+                    history: Optional[list[dict]] = None, model: Optional[str] = None,
+                    max_tokens: int = 4096, temperature: float = 0.5) -> Iterator[str]:
+        """Stream deltas from the configured OmniRoute chat endpoint."""
+        messages = [{"role": "system", "content": system}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+        payload = self._payload(messages, temperature=temperature,
+                                max_tokens=max_tokens, response_format=None,
+                                model=model)
+        payload["stream"] = True
+        endpoint = f"{self._url}/chat/completions"
+        if not self.is_configured():
+            raise OmniRouteUnavailable(
+                "OMNIROUTE UNAVAILABLE — OmniRoute is disabled or has no endpoint configured."
+            )
+        try:
+            response = self._stream_session.post(
+                endpoint,
+                headers=self._headers(),
+                json=payload,
+                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                stream=True,
+            )
+        except requests.exceptions.ConnectionError as exc:
+            raise OmniRouteUnavailable(
+                f"OMNIROUTE UNAVAILABLE — cannot reach {endpoint} ({exc})."
+            ) from exc
+        except Exception as exc:
+            raise OmniRouteUnavailable(
+                f"OMNIROUTE UNAVAILABLE — request to {endpoint} failed ({exc})."
+            ) from exc
+        try:
+            if response.status_code != 200:
+                raise OmniRouteUnavailable(
+                    f"OMNIROUTE UNAVAILABLE — HTTP {response.status_code} from {endpoint}: "
+                    f"{_truncate(getattr(response, 'text', ''))}"
+                )
+            yield from iter_sse_content(response)
+        finally:
+            close = getattr(response, "close", None)
+            if close:
+                close()
 
     def multi_turn(self, messages: list[dict], model: Optional[str] = None,
                    max_tokens: int = 4096, temperature: float = 0.7) -> str:

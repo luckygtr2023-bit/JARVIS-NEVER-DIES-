@@ -339,18 +339,19 @@ def _cleanup_current_audio() -> None:
         _current_audio_path = None
 
 
-def _speak_edge_native(text: str) -> None:
+def _speak_edge_native(text: str) -> bool:
     global _current_player_alias, _current_audio_path
     text = (text or "").strip()
     if not text:
-        return
+        return False
 
     try:
         import edge_tts
     except Exception as exc:  # pragma: no cover
         print(f"[AttentionMonitor] Edge TTS import failed: {exc}")
-        return
+        return False
 
+    _notify_speech_stage("tts_request_started")
     try:
         _cleanup_current_audio()
     except Exception:
@@ -362,10 +363,14 @@ def _speak_edge_native(text: str) -> None:
         # closer to Brahma's normal male audio output.
         communicator = edge_tts.Communicate(text, voice="en-US-GuyNeural")
         communicator.save_sync(audio_path)
+        # Edge TTS's current Windows/MCI adapter is file-based.  This marker is
+        # therefore "first audio ready", not a claim that the provider streamed
+        # the MP3 bytes; Gemini Live remains the true streaming path.
+        _notify_speech_stage("tts_first_audio")
     except Exception as exc:  # pragma: no cover
         print(f"[AttentionMonitor] Edge TTS generation failed: {exc}")
         _cleanup_current_audio()
-        return
+        return False
 
     player_alias = f"brahma_tts_{uuid.uuid4().hex}"
     try:
@@ -378,6 +383,7 @@ def _speak_edge_native(text: str) -> None:
         if result != 0:
             raise RuntimeError(f"MCI open failed: {result}")
 
+        _notify_speech_stage("playback_started")
         result = ctypes.windll.winmm.mciSendStringW(
             f"play {player_alias} wait",
             None,
@@ -392,15 +398,38 @@ def _speak_edge_native(text: str) -> None:
     except Exception as exc:  # pragma: no cover
         print(f"[AttentionMonitor] Edge TTS playback failed: {exc}")
         _cleanup_current_audio()
-        return
+        return False
+
+    return True
 
 
 _speech_sink = None
+_speech_telemetry = None
 
 
 def set_speech_sink(sink_fn) -> None:
     global _speech_sink
     _speech_sink = sink_fn
+
+
+def set_speech_telemetry(observer) -> None:
+    """Install an optional stage observer for the non-Live TTS fallback.
+
+    The observer receives only a stage name and never audio, text, paths, or
+    credentials.  Telemetry is best-effort and cannot affect speech.
+    """
+    global _speech_telemetry
+    _speech_telemetry = observer
+
+
+def _notify_speech_stage(stage: str) -> None:
+    observer = _speech_telemetry
+    if observer is None:
+        return
+    try:
+        observer(stage)
+    except Exception:
+        pass
 
 
 def speak_native(text: str) -> None:
@@ -410,7 +439,8 @@ def speak_native(text: str) -> None:
     if _speech_sink is not None:
         _speech_sink(text)
     else:
-        _speak_edge_native(text)
+        if not _speak_edge_native(text):
+            print("[AttentionMonitor] TTS unavailable or playback failed")
 
 
 def stop_native_speech() -> None:

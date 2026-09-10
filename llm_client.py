@@ -2,10 +2,11 @@ import json
 import logging
 import requests
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Iterator
 
 from or_client import client as openrouter_client
 from omniroute import OmniRouteClient, OmniRouteUnavailable
+from streaming import iter_sse_content
 
 logger = logging.getLogger("llm_client")
 
@@ -115,6 +116,45 @@ class UnifiedAIClient:
             logger.error(f"[LLM Client] Local AI Request Failed: {e}")
             return None
 
+    def _local_chat_stream(
+        self,
+        messages: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> Iterator[str]:
+        """Yield Ollama/OpenAI-compatible deltas without buffering a reply."""
+        payload = {
+            "model": self._local_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        endpoint = f"{self._local_url}/chat/completions"
+        try:
+            response = requests.post(
+                endpoint,
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=(LOCAL_CONNECT_TIMEOUT, LOCAL_READ_TIMEOUT),
+                stream=True,
+            )
+        except requests.exceptions.ConnectionError as exc:
+            raise RuntimeError(f"{self._ollama_label()} — could not reach {endpoint}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"{self._ollama_label()} — streaming request failed: {exc}") from exc
+
+        try:
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"{self._ollama_label()} — HTTP {response.status_code} from {endpoint}"
+                )
+            yield from iter_sse_content(response)
+        finally:
+            close = getattr(response, "close", None)
+            if close:
+                close()
+
     def _clean_json(self, raw: str) -> dict:
         clean = raw.strip()
         if clean.startswith("```"):
@@ -218,6 +258,87 @@ class UnifiedAIClient:
             attempts.append((label, fn))
 
         return self._run_chain(attempts)
+
+    def chat_stream(
+        self,
+        prompt: str,
+        system: str = "You are a helpful assistant.",
+        history: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.5,
+    ) -> Iterator[str]:
+        """Stream text through the existing Local -> OmniRoute -> remote chain.
+
+        A provider is only considered successful after its first non-empty
+        delta.  If it fails before that point, the next configured provider is
+        tried.  Once speech has begun, the error is raised instead of silently
+        splicing two answers together.
+        """
+        self.reload_settings()
+        messages = [{"role": "system", "content": system}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+
+        def _local() -> Iterator[str]:
+            return self._local_chat_stream(messages, temperature, max_tokens)
+
+        def _omni() -> Iterator[str]:
+            if not hasattr(self._omni, "chat_stream"):
+                raise RuntimeError("OmniRoute streaming is not available")
+            return self._omni.chat_stream(
+                prompt, system=system, history=history, model=model,
+                max_tokens=max_tokens, temperature=temperature,
+            )
+
+        def _remote() -> Iterator[str]:
+            if not hasattr(openrouter_client, "chat_stream"):
+                raise RuntimeError("OpenRouter streaming is not available")
+            return openrouter_client.chat_stream(
+                prompt, system=system, history=history, model=model,
+                max_tokens=max_tokens, temperature=temperature,
+            )
+
+        by_name = {
+            "local": (self._ollama_label(), _local),
+            "omni": ("OMNIROUTE", _omni),
+            "remote": ("OpenRouter", _remote),
+        }
+        if self._provider == "OmniRoute" and not self._omni.is_configured():
+            order = ["local", "remote"] if self._auto_switch else []
+        else:
+            order = self._chain_order()
+
+        errors: list[str] = []
+        tried = 0
+        for index, key in enumerate(order):
+            if index > 0 and not self._auto_switch:
+                break
+            if key == "omni" and not self._omni.is_configured():
+                continue
+            tried += 1
+            label, factory = by_name[key]
+            received = False
+            try:
+                for delta in factory():
+                    delta = str(delta or "")
+                    if not delta:
+                        continue
+                    received = True
+                    yield delta
+                if received:
+                    return
+                errors.append(f"{label} returned an empty stream")
+            except Exception as exc:
+                errors.append(f"{label} failed ({exc})")
+                if received:
+                    raise
+
+        detail = "; ".join(errors) if errors else "No AI provider responded."
+        if tried == 1 and not self._auto_switch:
+            raise RuntimeError(detail)
+        raise RuntimeError(f"AI UNAVAILABLE — {detail}")
 
     def chat_json(self, prompt: str, system: str = "Return ONLY valid JSON.", model: Optional[str] = None, max_tokens: int = 4096) -> dict:
         self.reload_settings()
